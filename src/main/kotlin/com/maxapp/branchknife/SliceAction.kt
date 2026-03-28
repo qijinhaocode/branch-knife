@@ -9,7 +9,9 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
+import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VirtualFileManager
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
@@ -144,8 +146,10 @@ class SliceAction : AnAction() {
                                 targets,
                                 indicator,
                             )
+                        // 后台再跑一遍 branch：不指望 IDE「读终端」，但与手动执行类似，有时利于 Git/FS 状态对齐
+                        nudgeGitBranchList(project, repo.root)
                         ApplicationManager.getApplication().invokeLater {
-                            repo.update()
+                            refreshGitAndVcsUi(project)
                             val branchList = created.joinToString("\n") { "• $it" }
                             Messages.showInfoMessage(
                                 project,
@@ -352,6 +356,32 @@ class SliceAction : AnAction() {
             throw IOException("分支名仅允许字母、数字、/、.、_、-：$name")
         }
         return t
+    }
+
+    /** 拆分全部完成后在 **后台线程** 执行一次 `git branch --list`，与在终端手动执行类似（IDE 不解析输出，仅作状态对齐尝试）。 */
+    private fun nudgeGitBranchList(project: Project, root: VirtualFile) {
+        val h = GitLineHandler(project, root, GitCommand.BRANCH)
+        h.addParameters("--list", "--no-color")
+        Git.getInstance().runCommand(h)
+    }
+
+    /**
+     * 在后台改完 Git 后，主动驱动 IDE 里 Git / VCS 相关 UI 刷新（分支列表、状态等）。
+     * 先递归刷新仓库 `.git` 目录的 VFS（新分支在 `refs/heads/` 下），再 [GitRepository.update] 与 [GitRepository.GIT_REPO_CHANGE]。
+     */
+    private fun refreshGitAndVcsUi(project: Project) {
+        val mgr = GitRepositoryManager.getInstance(project)
+        for (repository in mgr.repositories) {
+            try {
+                repository.gitDir.refresh(false, true)
+            } catch (_: Throwable) {
+                // 个别主题/沙箱下 refresh 失败不阻断后续 update
+            }
+            repository.update()
+            project.messageBus.syncPublisher(GitRepository.GIT_REPO_CHANGE).repositoryChanged(repository)
+        }
+        VcsDirtyScopeManager.getInstance(project).markEverythingDirty()
+        VirtualFileManager.getInstance().refreshWithoutFileWatcher(false)
     }
 
     private fun primaryRepository(project: Project): GitRepository? {
