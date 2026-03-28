@@ -3,7 +3,8 @@
     <name>Branch-Knife</name>
     <vendor>Maxapp</vendor>
     <description><![CDATA[
-    在<strong>功能分支</strong>上，将相对 <code>master</code>/<code>main</code> 的<strong>已提交差异</strong>按目录规则拆成多个 <code>split/&lt;服务&gt;-&lt;时间戳&gt;</code> 分支，便于按服务提 PR。<br/><br/>
+    指定<strong>目标功能分支</strong>后，用 <code>git diff --name-only</code> 列出相对 <code>master</code>/<code>main</code> 的差异路径（仅枚举文件，不合并）；再对每个服务：<code>checkout</code> 基准 → <code>checkout -b split/*</code> → <code>git checkout 目标分支 -- 路径</code> → <code>commit</code>。结束切回操作前所在分支。<br/>
+    在仓库根配置 <code>branch-knife.paths</code>（每行 <code>路径片段=服务名</code>）以匹配你的 monorepo 目录；无此文件时使用内置示例规则。<br/><br/>
     <b>入口</b>：<b>Tools → Branch-Knife</b>，或 <b>Git</b> 菜单底部，或 <b>VCS Operations</b> 弹窗；亦可用 Find Action 搜索 <code>Slice</code>。
     ]]></description>
 
