@@ -6,11 +6,10 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
+import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.Messages
-import com.intellij.openapi.vcs.changes.Change
-import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBScrollPane
@@ -23,7 +22,6 @@ import git4idea.repo.GitRepositoryManager
 import java.awt.BorderLayout
 import java.awt.Dimension
 import java.io.IOException
-import java.nio.file.Path
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import javax.swing.Box
@@ -31,6 +29,10 @@ import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JPanel
 
+/**
+ * 将**当前分支**相对 **master / main** 的已提交差异（`base...HEAD`）按目录规则拆成多个 `split/<服务>-<时间戳>` 分支。
+ * 不依赖未提交的 Local Changes。
+ */
 class SliceAction : AnAction() {
 
     override fun update(e: AnActionEvent) {
@@ -39,55 +41,96 @@ class SliceAction : AnAction() {
             e.presentation.isEnabledAndVisible = false
             return
         }
-        val clm = ChangeListManager.getInstance(project)
-        val hasChanges = clm.allChanges.isNotEmpty()
         val hasGit = GitRepositoryManager.getInstance(project).repositories.isNotEmpty()
-        e.presentation.isEnabledAndVisible = hasChanges && hasGit
+        if (!hasGit) {
+            e.presentation.isEnabledAndVisible = false
+            return
+        }
+        val ready = !DumbService.isDumb(project)
+        e.presentation.isVisible = true
+        e.presentation.isEnabled = ready
+        e.presentation.description =
+            if (!ready) {
+                "项目索引更新中，请稍候再试。"
+            } else {
+                "将当前分支相对 master/main 上已提交的差异，按服务目录拆成多个从基准分支派生的 split 分支。"
+            }
     }
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val changes = ChangeListManager.getInstance(project).allChanges.toList()
-        if (changes.isEmpty()) {
-            Messages.showInfoMessage(project, "当前没有未提交的改动。", "Branch-Knife")
+        val repo = primaryRepository(project)
+        if (repo == null) {
+            Messages.showErrorDialog(project, "未找到 Git 仓库。", "Branch-Knife")
             return
         }
-        val repo = resolveRepository(project, changes)
-        if (repo == null) {
-            Messages.showErrorDialog(
+        val sourceBranch = repo.currentBranchName
+        if (sourceBranch == null) {
+            Messages.showErrorDialog(project, "当前为 detached HEAD，请先切到要拆分的功能分支。", "Branch-Knife")
+            return
+        }
+        val root = repo.root
+        val (baseBranch, paths) = try {
+            diffNameOnlyTripleDot(project, root)
+        } catch (ex: IOException) {
+            Messages.showErrorDialog(project, ex.message ?: ex.toString(), "Branch-Knife")
+            return
+        }
+        if (sourceBranch == baseBranch) {
+            Messages.showInfoMessage(
                 project,
-                "未找到唯一的 Git 仓库根目录，或改动分散在多个仓库中。",
+                "当前就在基准分支「$baseBranch」上。请先切到你的功能分支（上面已有要拆分的提交），再执行本操作。",
                 "Branch-Knife",
             )
             return
         }
-        val grouped = SlicerService.groupChanges(changes).filterValues { it.isNotEmpty() }
-        if (grouped.isEmpty()) {
-            Messages.showInfoMessage(project, "没有可分组的有效文件路径。", "Branch-Knife")
+        if (paths.isEmpty()) {
+            Messages.showInfoMessage(
+                project,
+                "当前分支相对「$baseBranch」没有可拆分的文件差异（${baseBranch}...HEAD 为空）。\n" +
+                    "请确认已在当前分支上提交过改动。",
+                "Branch-Knife",
+            )
             return
         }
-        val dialog = SliceGroupsDialog(project, grouped)
+        if (hasDirtyWorkingTree(project, root)) {
+            val ok = Messages.showOkCancelDialog(
+                project,
+                "工作区或暂存区尚有未提交修改，拆分过程会多次 checkout，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
+                "Branch-Knife",
+                Messages.getWarningIcon(),
+            )
+            if (ok != Messages.OK) return
+        }
+        val grouped = SlicerService.groupPaths(paths).filterValues { it.isNotEmpty() }
+        if (grouped.isEmpty()) {
+            Messages.showInfoMessage(project, "没有可分组的路径。", "Branch-Knife")
+            return
+        }
+        val dialog = SliceGroupsDialog(project, grouped, baseBranch, sourceBranch)
         if (!dialog.showAndGet()) return
         val selected = dialog.selectedEntries()
         if (selected.isEmpty()) {
             Messages.showInfoMessage(project, "未选择任何分组。", "Branch-Knife")
             return
         }
-        val originalBranch = repo.currentBranchName
-            ?: run {
-                Messages.showErrorDialog(project, "当前不在任何分支上（detached HEAD）。", "Branch-Knife")
-                return
-            }
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Branch-Knife：按服务拆分分支", true) {
                 override fun run(indicator: ProgressIndicator) {
                     try {
                         indicator.isIndeterminate = false
-                        runSlice(project, repo, originalBranch, selected, indicator)
+                        runSliceFromBranch(
+                            project,
+                            repo,
+                            baseBranch,
+                            sourceBranch,
+                            selected,
+                            indicator,
+                        )
                         ApplicationManager.getApplication().invokeLater {
                             Messages.showInfoMessage(
                                 project,
-                                "已完成所选分组的拆分提交。",
+                                "已完成所选分组。已切回分支「$sourceBranch」。",
                                 "Branch-Knife",
                             )
                         }
@@ -102,66 +145,82 @@ class SliceAction : AnAction() {
         )
     }
 
-    private fun runSlice(
+    /**
+     * `git diff --name-only <base>...HEAD`，依次尝试 master、main。
+     */
+    private fun diffNameOnlyTripleDot(project: Project, root: VirtualFile): Pair<String, List<String>> {
+        var lastErr = ""
+        for (base in listOf("master", "main")) {
+            val handler = GitLineHandler(project, root, GitCommand.DIFF)
+            handler.addParameters("--name-only", "$base...HEAD")
+            val result = Git.getInstance().runCommand(handler)
+            if (result.success()) {
+                val paths =
+                    result.output
+                        .map { it.trim().replace('\\', '/') }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                return base to paths
+            }
+            lastErr = result.errorOutputAsJoinedString
+        }
+        throw IOException(
+            "无法用 master...HEAD 或 main...HEAD 读取差异。请确认仓库存在本地 master 或 main。\n$lastErr",
+        )
+    }
+
+    private fun hasDirtyWorkingTree(project: Project, root: VirtualFile): Boolean {
+        val handler = GitLineHandler(project, root, GitCommand.STATUS)
+        handler.addParameters("--porcelain")
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) return true
+        return result.output.any { it.isNotBlank() }
+    }
+
+    private fun runSliceFromBranch(
         project: Project,
         repo: GitRepository,
-        originalBranch: String,
-        selected: List<Pair<String, List<Change>>>,
+        baseBranch: String,
+        sourceBranch: String,
+        selected: List<Pair<String, List<String>>>,
         indicator: ProgressIndicator,
     ) {
         val root = repo.root
         val ts = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now())
-        indicator.text = "Stash 本地改动…"
-        runGitOrThrow(project, root, GitCommand.STASH, "push", "-u", "-m", "Branch-Knife slice")
         var sliceError: Throwable? = null
         try {
-            var step = 0
             val total = selected.size
-            for ((service, groupChanges) in selected) {
-                step++
-                indicator.fraction = step.toDouble() / total
-                val relPaths = relativeRepoPaths(repo, groupChanges)
-                if (relPaths.isEmpty()) continue
-                indicator.text = "处理分组 $service ($step/$total)…"
-                runGitOrThrow(project, root, GitCommand.CHECKOUT, "master")
-                val branch = "split/${sanitizeBranchSegment(service)}-$ts"
-                runGitOrThrow(project, root, GitCommand.CHECKOUT, "-b", branch, "master")
-                val checkoutHandler = GitLineHandler(project, root, GitCommand.CHECKOUT)
-                checkoutHandler.addParameters("stash@{0}", "--")
-                relPaths.forEach { checkoutHandler.addParameters(it) }
-                val co = Git.getInstance().runCommand(checkoutHandler)
-                if (!co.success()) {
-                    throw IOException(co.errorOutputAsJoinedString)
+            selected.forEachIndexed { index, (service, relPaths) ->
+                if (relPaths.isEmpty()) return@forEachIndexed
+                indicator.fraction = (index + 1).toDouble() / total
+                indicator.text = "处理分组 $service (${index + 1}/$total)…"
+                runGitOrThrow(project, root, GitCommand.CHECKOUT, baseBranch)
+                val newBranch = "split/${sanitizeBranchSegment(service)}-$ts"
+                runGitOrThrow(project, root, GitCommand.CHECKOUT, "-b", newBranch, baseBranch)
+                val co = GitLineHandler(project, root, GitCommand.CHECKOUT)
+                co.addParameters(sourceBranch, "--")
+                relPaths.forEach { co.addParameters(it) }
+                val coResult = Git.getInstance().runCommand(co)
+                if (!coResult.success()) {
+                    throw IOException(coResult.errorOutputAsJoinedString)
                 }
-                val addHandler = GitLineHandler(project, root, GitCommand.ADD)
-                addHandler.addParameters("--")
-                relPaths.forEach { addHandler.addParameters(it) }
-                val ad = Git.getInstance().runCommand(addHandler)
-                if (!ad.success()) {
-                    throw IOException(ad.errorOutputAsJoinedString)
+                if (stagedDiffEmpty(project, root)) {
+                    throw IOException("分组「$service」在检出后没有可提交的暂存变更，请检查路径是否与分支差异一致。")
                 }
                 runGitOrThrow(
                     project,
                     root,
                     GitCommand.COMMIT,
                     "-m",
-                    "Branch-Knife: $service",
+                    "Branch-Knife: $service (from $sourceBranch)",
                 )
             }
         } catch (e: Throwable) {
             sliceError = e
         } finally {
-            indicator.text = "切回原分支并恢复工作区…"
+            indicator.text = "切回源分支 $sourceBranch…"
             try {
-                runGitOrThrow(project, root, GitCommand.CHECKOUT, originalBranch)
-                val popHandler = GitLineHandler(project, root, GitCommand.STASH)
-                popHandler.addParameters("pop")
-                val pop = Git.getInstance().runCommand(popHandler)
-                if (!pop.success()) {
-                    throw IOException(
-                        "stash pop 失败，请手动处理 stash。\n${pop.errorOutputAsJoinedString}",
-                    )
-                }
+                runGitOrThrow(project, root, GitCommand.CHECKOUT, sourceBranch)
             } catch (restoreEx: Throwable) {
                 if (sliceError != null) {
                     sliceError.addSuppressed(restoreEx)
@@ -171,6 +230,14 @@ class SliceAction : AnAction() {
             }
         }
         sliceError?.let { throw it }
+    }
+
+    private fun stagedDiffEmpty(project: Project, root: VirtualFile): Boolean {
+        val handler = GitLineHandler(project, root, GitCommand.DIFF)
+        handler.addParameters("--cached", "--name-only")
+        val result = Git.getInstance().runCommand(handler)
+        if (!result.success()) return true
+        return result.output.none { it.isNotBlank() }
     }
 
     private fun runGitOrThrow(project: Project, root: VirtualFile, cmd: GitCommand, vararg args: String) {
@@ -185,40 +252,24 @@ class SliceAction : AnAction() {
     private fun sanitizeBranchSegment(name: String): String =
         name.replace(Regex("[^a-zA-Z0-9._-]"), "-")
 
-    private fun relativeRepoPaths(repo: GitRepository, changes: List<Change>): List<String> {
-        val rootPath = Path.of(repo.root.path).normalize()
-        return changes.mapNotNull { ch ->
-            val abs = SlicerService.pathOf(ch).takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val p = Path.of(abs).normalize()
-            val rel = try {
-                rootPath.relativize(p)
-            } catch (_: IllegalArgumentException) {
-                return@mapNotNull null
-            }
-            if (rel.isEmpty || rel.toString().contains("..")) return@mapNotNull null
-            rel.joinToString("/").replace('\\', '/')
-        }.distinct()
-    }
-
-    private fun resolveRepository(project: Project, changes: Collection<Change>): GitRepository? {
+    private fun primaryRepository(project: Project): GitRepository? {
         val repos = GitRepositoryManager.getInstance(project).repositories
         if (repos.isEmpty()) return null
         if (repos.size == 1) return repos.single()
-        val hits = changes.mapNotNull { ch ->
-            val path = SlicerService.pathOf(ch).takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            repos.find { path.startsWith(it.root.path) }
-        }.distinct()
-        return hits.singleOrNull()
+        val base = project.basePath ?: return repos.first()
+        return repos.find { base.startsWith(it.root.path) } ?: repos.first()
     }
 
     private class SliceGroupsDialog(
         project: Project,
-        private val groups: Map<String, List<Change>>,
+        private val groups: Map<String, List<String>>,
+        baseBranch: String,
+        sourceBranch: String,
     ) : DialogWrapper(project) {
         private val checks = LinkedHashMap<String, JBCheckBox>()
 
         init {
-            title = "选择要拆分的改动分组"
+            title = "按服务拆分（基准 $baseBranch ← 源分支 $sourceBranch）"
             init()
         }
 
@@ -233,13 +284,13 @@ class SliceAction : AnAction() {
                 inner.add(Box.createVerticalStrut(JBUI.scale(4)))
             }
             val scroll = JBScrollPane(inner)
-            scroll.preferredSize = Dimension(JBUI.scale(360), JBUI.scale(220))
+            scroll.preferredSize = Dimension(JBUI.scale(420), JBUI.scale(240))
             val panel = JPanel(BorderLayout())
             panel.add(scroll, BorderLayout.CENTER)
             return panel
         }
 
-        fun selectedEntries(): List<Pair<String, List<Change>>> =
+        fun selectedEntries(): List<Pair<String, List<String>>> =
             groups.entries
                 .filter { checks[it.key]?.isSelected == true }
                 .map { it.key to it.value }
