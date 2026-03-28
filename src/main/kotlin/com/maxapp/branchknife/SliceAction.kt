@@ -148,8 +148,10 @@ class SliceAction : AnAction() {
                             )
                         // 后台再跑一遍 branch：不指望 IDE「读终端」，但与手动执行类似，有时利于 Git/FS 状态对齐
                         nudgeGitBranchList(project, repo.root)
+                        // GitRepository.update() 禁止在 EDT 调用（IJ 平台线程模型），必须在当前 BGT 完成
+                        updateAllGitRepositories(project)
                         ApplicationManager.getApplication().invokeLater {
-                            refreshGitAndVcsUi(project)
+                            publishGitChangeAndRefreshVcsUiOnEdt(project)
                             val branchList = created.joinToString("\n") { "• $it" }
                             Messages.showInfoMessage(
                                 project,
@@ -365,19 +367,24 @@ class SliceAction : AnAction() {
         Git.getInstance().runCommand(h)
     }
 
+    /** 在 **后台线程** 同步 Git4Idea 仓库元数据（[GitRepository.update] 不允许在 EDT 调用）。 */
+    private fun updateAllGitRepositories(project: Project) {
+        GitRepositoryManager.getInstance(project).repositories.forEach { it.update() }
+    }
+
     /**
-     * 在后台改完 Git 后，主动驱动 IDE 里 Git / VCS 相关 UI 刷新（分支列表、状态等）。
-     * 先递归刷新仓库 `.git` 目录的 VFS（新分支在 `refs/heads/` 下），再 [GitRepository.update] 与 [GitRepository.GIT_REPO_CHANGE]。
+     * 在 **EDT** 上刷新 `.git` 的 VFS、广播 [GitRepository.GIT_REPO_CHANGE]、标记 VCS 脏范围。
+     * 须在 [updateAllGitRepositories] 于 BGT 执行完毕之后调用。
      */
-    private fun refreshGitAndVcsUi(project: Project) {
+    @Suppress("DEPRECATION")
+    private fun publishGitChangeAndRefreshVcsUiOnEdt(project: Project) {
         val mgr = GitRepositoryManager.getInstance(project)
         for (repository in mgr.repositories) {
             try {
                 repository.gitDir.refresh(false, true)
             } catch (_: Throwable) {
-                // 个别主题/沙箱下 refresh 失败不阻断后续 update
+                // 个别环境下 refresh 失败不阻断后续通知
             }
-            repository.update()
             project.messageBus.syncPublisher(GitRepository.GIT_REPO_CHANGE).repositoryChanged(repository)
         }
         VcsDirtyScopeManager.getInstance(project).markEverythingDirty()
