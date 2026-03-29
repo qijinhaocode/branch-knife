@@ -2,22 +2,41 @@ package com.maxapp.branchknife
 
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
+import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.DumbService
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.DialogWrapper
+import com.intellij.openapi.ui.MessageDialogBuilder
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vcs.changes.VcsDirtyScopeManager
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.openapi.vfs.VirtualFileManager
+import git4idea.GitBranch
+import git4idea.actions.branch.GitBranchActionsUtil
 import git4idea.commands.Git
 import git4idea.commands.GitCommand
 import git4idea.commands.GitLineHandler
 import git4idea.repo.GitRepository
 import git4idea.repo.GitRepositoryManager
+import com.intellij.ui.components.JBList
+import com.intellij.ui.components.JBScrollPane
+import com.intellij.util.ui.JBUI
+import java.awt.BorderLayout
+import java.awt.Dimension
 import java.io.IOException
+import javax.swing.DefaultListModel
+import javax.swing.JComponent
+import javax.swing.JLabel
+import javax.swing.JPanel
+
+/**
+ * Git Log「分支」面板向 DataContext 注入的选中分支列表；与 git4idea 内部 `GIT_BRANCHES` 同源（键名 `GitBranchKey`），该符号在 SDK 中为 internal，故用同名 [DataKey] 读取。
+ */
+private val GIT_BRANCH_KEY: DataKey<List<*>> = DataKey.create("GitBranchKey")
 
 /**
  * 按「目标功能分支」相对 **master / main** 的差异路径，在本地建多个**你命名的功能分支**，便于按模块提 PR。
@@ -31,6 +50,12 @@ import java.io.IOException
  * 4. `git commit -m <你填的说明>`
  *
  * 全部完成后 `git checkout` 回到**你点菜单前**所在的分支（不必事先切到目标分支上）。
+ *
+ * **从 Git 分支弹窗子菜单**进入时，使用 [GitBranchActionsUtil.BRANCHES_KEY] 解析选中分支；
+ * **Git Log 左侧分支树**：其右键菜单无法扩展，可在树中选中分支后通过快捷键 / Tools 菜单触发，此时通过 `GIT_BRANCH_KEY`（`GitBranchKey`）读取选中项。
+ * 其它入口仍按原逻辑（当前分支或手动选择）。
+ *
+ * **基准分支**：`git diff` 默认依次尝试 `master`、`main`；若仓库根存在 **branch-knife.base**（单独一行 `main` 或 `master`），则优先使用该基准。
  */
 class SliceAction : AnAction() {
 
@@ -48,17 +73,24 @@ class SliceAction : AnAction() {
         val ready = !DumbService.isDumb(project)
         e.presentation.isVisible = true
         e.presentation.isEnabled = ready
+        val logBranchName = gitLogDashboardSelectionBranchName(e)
         e.presentation.description =
-            if (!ready) {
-                "项目索引更新中，请稍候再试。"
-            } else {
-                "从 master/main 派生 split/* 分支，再检出目标功能分支上按服务划分的路径并提交；用 diff 仅列出差异文件路径。"
+            when {
+                !ready -> "项目索引更新中，请稍候再试。"
+                logBranchName != null ->
+                    "以 Log 分支树选中项「$logBranchName」为目标拆分（Git Log 分支树右键菜单无法扩展，请用选中 + 快捷键或菜单）。"
+                else ->
+                    "从 master/main 派生新分支，再检出目标功能分支上按服务划分的路径并提交；用 diff 仅列出差异文件路径。"
             }
     }
 
     override fun actionPerformed(e: AnActionEvent) {
         val project = e.project ?: return
-        val repo = primaryRepository(project)
+        val branchUiCtx = branchContextFromGitUi(e)
+        val repo =
+            e.getData(GitBranchActionsUtil.SELECTED_REPO_KEY)
+                ?: branchUiCtx?.preferredRepo
+                ?: primaryRepository(project)
         if (repo == null) {
             Messages.showErrorDialog(project, "未找到 Git 仓库。", "Branch-Knife")
             return
@@ -71,7 +103,7 @@ class SliceAction : AnAction() {
                     return
                 }
         val targetBranch =
-            resolveTargetFeatureBranch(project, repo, root)
+            resolveTargetFeatureBranch(project, repo, root, branchUiCtx?.refForGit)
                 ?: return
         val preflight =
             try {
@@ -103,13 +135,13 @@ class SliceAction : AnAction() {
             return
         }
         if (preflight.dirty) {
-            val ok = Messages.showOkCancelDialog(
-                project,
-                "工作区或暂存区尚有未提交修改，拆分过程会多次 checkout，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
-                "Branch-Knife",
-                Messages.getWarningIcon(),
-            )
-            if (ok != Messages.OK) return
+            val proceed =
+                MessageDialogBuilder.okCancel(
+                    "Branch-Knife",
+                    "工作区或暂存区尚有未提交修改，拆分过程会多次 checkout，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
+                ).icon(Messages.getWarningIcon())
+                    .ask(project)
+            if (!proceed) return
         }
         val rules = SlicerService.loadPathRules(root.path)
         val grouped = SlicerService.groupPaths(paths, rules).filterValues { it.isNotEmpty() }
@@ -124,6 +156,8 @@ class SliceAction : AnAction() {
                 grouped,
                 baseBranch,
                 targetBranch,
+                targetBranchFullName = branchUiCtx?.fullName,
+                targetBranchIsRemote = branchUiCtx?.isRemote ?: false,
             )
         if (!dialog.showAndGet()) return
         val targets = dialog.getConfirmedTargets()
@@ -177,7 +211,97 @@ class SliceAction : AnAction() {
         )
     }
 
-    private fun resolveTargetFeatureBranch(project: Project, repo: GitRepository, root: VirtualFile): String? {
+    private data class GitPopupBranchContext(
+        /** `git diff` / `git checkout` 使用的 ref 短名，如 `feature/x`、`origin/feature/x` */
+        val refForGit: String,
+        /** 完整引用，如 `refs/heads/feature/x`、`refs/remotes/origin/x` */
+        val fullName: String,
+        val isRemote: Boolean,
+        /** Git Log「分支」面板选中项对应的仓库（多根时优先） */
+        val preferredRepo: GitRepository? = null,
+    )
+
+    /**
+     * 解析「当前要选作拆分目标」的分支：
+     * 1. 状态栏/Git 大分支弹窗里子菜单注入的 [GitBranchActionsUtil.BRANCHES_KEY]；
+     * 2. **Git Log 左侧分支树**焦点上下文中的 `GIT_BRANCH_KEY`（与平台 `GitBranchKey` 一致；该树右键菜单无法注册第三方项）。
+     */
+    private fun branchContextFromGitUi(e: AnActionEvent): GitPopupBranchContext? {
+        val fromPopup = e.getData(GitBranchActionsUtil.BRANCHES_KEY)
+        if (!fromPopup.isNullOrEmpty()) {
+            val b: GitBranch = fromPopup.first()
+            return GitPopupBranchContext(
+                refForGit = b.name.trim(),
+                fullName = b.fullName,
+                isRemote = b.isRemote,
+                preferredRepo = null,
+            )
+        }
+        val fromLogDashboard = e.getData(GIT_BRANCH_KEY) ?: return null
+        if (fromLogDashboard.isEmpty()) return null
+        return gitPopupContextFromDashboardBranchInfo(fromLogDashboard.first())
+    }
+
+    /** 供 [update] 展示：从 Log 分支面板选中项读取短名（不依赖 internal `git4idea.ui.branch.dashboard`）。 */
+    private fun gitLogDashboardSelectionBranchName(e: AnActionEvent): String? {
+        val list = e.getData(GIT_BRANCH_KEY) ?: return null
+        if (list.isEmpty()) return null
+        return dashboardBranchInfoBranchName(list.first())
+    }
+
+    private fun dashboardBranchInfoBranchName(item: Any?): String? {
+        if (item == null) return null
+        return try {
+            val c = item.javaClass
+            if (c.name != "git4idea.ui.branch.dashboard.BranchInfo") return null
+            (c.getMethod("getBranchName").invoke(item) as String).trim()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 通过反射构造上下文：`BranchInfo` 在 vcs-git 中为 internal，无法直接引用类型。
+     */
+    private fun gitPopupContextFromDashboardBranchInfo(item: Any?): GitPopupBranchContext? {
+        if (item == null) return null
+        return try {
+            val c = item.javaClass
+            if (c.name != "git4idea.ui.branch.dashboard.BranchInfo") return null
+            val name = (c.getMethod("getBranchName").invoke(item) as String).trim()
+            val isLocal = c.getMethod("isLocal").invoke(item) as Boolean
+            @Suppress("UNCHECKED_CAST")
+            val repos = c.getMethod("getRepositories").invoke(item) as List<*>
+            val preferredRepo = repos.firstOrNull() as? GitRepository
+            val full =
+                if (isLocal) {
+                    "refs/heads/$name"
+                } else {
+                    "refs/remotes/$name"
+                }
+            GitPopupBranchContext(
+                refForGit = name,
+                fullName = full,
+                isRemote = !isLocal,
+                preferredRepo = preferredRepo,
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * @param branchFromPopup 非空时直接作为要拆分的功能分支（相对基准分支做 diff）；否则沿用「当前分支或弹窗选择」。
+     */
+    private fun resolveTargetFeatureBranch(
+        project: Project,
+        repo: GitRepository,
+        root: VirtualFile,
+        branchFromPopup: String?,
+    ): String? {
+        if (!branchFromPopup.isNullOrBlank()) {
+            return branchFromPopup.trim()
+        }
         val current = repo.currentBranchName ?: return null
         if (current !in BASE_BRANCH_NAMES) {
             return current
@@ -200,18 +324,7 @@ class SliceAction : AnAction() {
             )
             return null
         }
-        val idx =
-            Messages.showChooseDialog(
-                project,
-                "Branch-Knife",
-                "当前在「$current」。请选择**要拆分的功能分支**。\n" +
-                    "插件会用 git diff 列出「master 或 main」与该分支之间的**差异文件路径**（不合并），再按目录拆成多个 split/* 分支。",
-                Messages.getQuestionIcon(),
-                candidates.toTypedArray(),
-                candidates.first(),
-            )
-        if (idx < 0) return null
-        return candidates[idx]
+        return ChooseFeatureBranchDialog(project, current, candidates).open()
     }
 
     private fun listLocalBranchShortNames(project: Project, root: VirtualFile): List<String> {
@@ -233,8 +346,8 @@ class SliceAction : AnAction() {
     }
 
     /**
-     * `git diff --name-only <base>...<targetBranch>`，base 依次尝试 master、main。
-     * 与当前 HEAD 检出在哪个分支无关，只要引用存在即可。
+     * `git diff --name-only <base>...<targetBranch>`。
+     * 基准分支顺序：若存在 `branch-knife.base` 则优先；否则依次 **master → main**（先成功的为准）。
      */
     private fun diffNameOnlyBaseToTarget(
         project: Project,
@@ -242,7 +355,8 @@ class SliceAction : AnAction() {
         targetBranch: String,
     ): Pair<String, List<String>> {
         var lastErr = ""
-        for (base in BASE_BRANCH_TRY_ORDER) {
+        val bases = baseBranchCandidates(root)
+        for (base in bases) {
             val handler = GitLineHandler(project, root, GitCommand.DIFF)
             handler.addParameters("--name-only", "$base...$targetBranch")
             val result = Git.getInstance().runCommand(handler)
@@ -256,9 +370,21 @@ class SliceAction : AnAction() {
             }
             lastErr = result.errorOutputAsJoinedString
         }
+        val tried = bases.joinToString("、") { "$it...$targetBranch" }
         throw IOException(
-            "无法用 master...$targetBranch 或 main...$targetBranch 列出差异路径，请确认本地存在 master 或 main。\n$lastErr",
+            "无法用 $tried 列出差异路径。\n" +
+                "请确认本地存在 main 或 master；若两者都有且需固定其一，可在仓库根添加文件 branch-knife.base（单独一行 main 或 master）。\n" +
+                lastErr,
         )
+    }
+
+    private fun baseBranchCandidates(root: VirtualFile): List<String> {
+        val pref = SlicerService.loadBaseBranchPreference(root.path)
+        return if (pref != null) {
+            listOf(pref) + BASE_BRANCH_TRY_ORDER.filter { it != pref }
+        } else {
+            BASE_BRANCH_TRY_ORDER.toList()
+        }
     }
 
     private fun hasDirtyWorkingTree(project: Project, root: VirtualFile): Boolean {
@@ -434,3 +560,53 @@ class SliceAction : AnAction() {
         private val BASE_BRANCH_NAMES = BASE_BRANCH_TRY_ORDER.toSet()
     }
 }
+
+/**
+ * 替代已弃用的 [Messages.showChooseDialog]：模态列表选择本地功能分支。
+ */
+private class ChooseFeatureBranchDialog(
+    project: Project,
+    private val currentBranch: String,
+    candidates: List<String>,
+) : DialogWrapper(project) {
+    private val model =
+        DefaultListModel<String>().apply {
+            candidates.forEach { addElement(it) }
+        }
+    private val list = JBList(model)
+
+    init {
+        title = "Branch-Knife"
+        init()
+        if (candidates.isNotEmpty()) {
+            list.selectedIndex = 0
+        }
+    }
+
+    override fun createCenterPanel(): JComponent {
+        val panel = JPanel(BorderLayout())
+        panel.add(
+            JLabel(
+                "<html><body width='${JBUI.scale(380)}'>" +
+                    "当前在「${escapeHtmlForChooseDialog(currentBranch)}」。请选择<strong>要拆分的功能分支</strong>。<br/><br/>" +
+                    "插件会用 git diff 列出「master / main」与该分支之间的<strong>差异文件路径</strong>（不合并），再按目录拆分。" +
+                    "</body></html>",
+            ),
+            BorderLayout.NORTH,
+        )
+        list.visibleRowCount = 12
+        panel.add(JBScrollPane(list), BorderLayout.CENTER)
+        panel.preferredSize = Dimension(JBUI.scale(420), JBUI.scale(320))
+        return panel
+    }
+
+    fun open(): String? {
+        if (!showAndGet()) return null
+        return list.selectedValue
+    }
+}
+
+private fun escapeHtmlForChooseDialog(s: String): String =
+    s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")

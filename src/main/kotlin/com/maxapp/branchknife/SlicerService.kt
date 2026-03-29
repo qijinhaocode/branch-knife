@@ -35,6 +35,28 @@ object SlicerService {
         return PathRules(rules, useBuiltInFallback = rules.isEmpty())
     }
 
+    /**
+     * 仓库根目录可选文件 `branch-knife.base`：单独一行 `main` 或 `master`（可带注释行 `#`）。
+     * 用于仓库里 **同时存在 main 与 master** 时，明确以哪一个作为 diff / checkout 的基准分支；
+     * 未配置时插件仍按 **先 master、再 main** 依次尝试。
+     */
+    fun loadBaseBranchPreference(repoRootPath: String): String? {
+        val f = Path.of(repoRootPath, "branch-knife.base")
+        if (!Files.isRegularFile(f)) return null
+        val line =
+            Files.readAllLines(f, StandardCharsets.UTF_8)
+                .firstOrNull { t ->
+                    val s = t.trim()
+                    s.isNotEmpty() && !s.startsWith("#")
+                }
+                ?.trim()
+                ?: return null
+        return when (line.lowercase()) {
+            "master", "main" -> line.lowercase()
+            else -> null
+        }
+    }
+
     fun serviceName(path: String, rules: PathRules): String {
         val p = path.replace('\\', '/').trim().removePrefix("./")
         for ((frag, name) in rules.fragments) {
