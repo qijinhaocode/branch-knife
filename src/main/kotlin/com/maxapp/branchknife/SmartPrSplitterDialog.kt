@@ -1,5 +1,6 @@
 package com.maxapp.branchknife
 
+import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
@@ -52,8 +53,14 @@ data class PrSplitTarget(
 
 internal enum class DialogLang { ZH, EN }
 
-/** 会话级语言偏好；切换后下次打开对话框仍延续，SliceAction 中的提示也读此状态。 */
-internal var dialogLang: DialogLang = DialogLang.ZH
+private const val LANG_PREF_KEY = "branchknife.ui.lang"
+
+/** 从磁盘加载上次选择的语言，默认 English。重启 IDE 后依然有效。 */
+internal var dialogLang: DialogLang =
+    if (PropertiesComponent.getInstance().getValue(LANG_PREF_KEY, "EN") == "ZH")
+        DialogLang.ZH
+    else
+        DialogLang.EN
 
 /** 根据当前语言返回对应字符串。 */
 private fun t(zh: String, en: String): String =
@@ -168,7 +175,10 @@ class SmartPrSplitterDialog(
 
         langToggleBtn =
             JButton(langToggleText()).apply {
-                toolTipText = t("Switch to English", "切换到中文")
+                isContentAreaFilled = false
+                isBorderPainted = false
+                toolTipText = langToggleTooltip()
+                cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                 addActionListener { toggleLang() }
             }
 
@@ -241,6 +251,7 @@ class SmartPrSplitterDialog(
 
     private fun toggleLang() {
         dialogLang = if (dialogLang == DialogLang.ZH) DialogLang.EN else DialogLang.ZH
+        PropertiesComponent.getInstance().setValue(LANG_PREF_KEY, dialogLang.name)
         refreshLang()
     }
 
@@ -252,7 +263,7 @@ class SmartPrSplitterDialog(
         targetBranchesTitleLabel.text = t("目标分支", "TARGET BRANCHES")
         helpBtn.toolTipText = t("查看使用说明", "View help")
         langToggleBtn.text = langToggleText()
-        langToggleBtn.toolTipText = t("Switch to English", "切换到中文")
+        langToggleBtn.toolTipText = langToggleTooltip()
         addBranchTargetBtn.text = t("+ 添加目标分支", "+ Add Branch Target")
         updateStatus()
         cards.forEach { it.refreshLang() }
@@ -273,8 +284,12 @@ class SmartPrSplitterDialog(
     private fun localChangesText(): String =
         t("本地变更（${allPaths.size} 个文件）", "LOCAL CHANGES (${allPaths.size} FILES)")
 
+    /** 显示当前语言，让用户知道「我现在用的是什么语言」，点击切换到另一种。 */
     private fun langToggleText(): String =
-        if (dialogLang == DialogLang.ZH) "EN" else "中文"
+        if (dialogLang == DialogLang.ZH) "🌐 中文" else "🌐 English"
+
+    private fun langToggleTooltip(): String =
+        if (dialogLang == DialogLang.ZH) "Switch to English" else "切换到中文"
 
     private fun emptyStateText(): String =
         t(
