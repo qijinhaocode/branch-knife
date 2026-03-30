@@ -2,32 +2,91 @@
     <id>com.maxapp.branchknife</id>
     <name>Branch-Knife</name>
     <vendor>Maxapp</vendor>
+
     <description><![CDATA[
-    指定<strong>目标功能分支</strong>后，用 <code>git diff --name-only</code> 列出相对 <code>master</code>/<code>main</code> 的差异路径（仅枚举文件，不合并）；再对每个服务：<code>checkout</code> 基准 → <code>checkout -b split/*</code> → <code>git checkout 目标分支 -- 路径</code> → <code>commit</code>。结束切回操作前所在分支。<br/>
-    在仓库根配置 <code>branch-knife.paths</code>（每行 <code>路径片段=服务名</code>）以匹配你的 monorepo 目录；无此文件时使用内置示例规则。<br/>
-    可选 <code>branch-knife.base</code>：单独一行 <code>main</code> 或 <code>master</code>，在两者都存在时固定 diff / checkout 的基准分支（默认先尝试 master 再 main）。<br/><br/>
-    <b>入口</b>：<b>Tools → Branch-Knife</b>、<b>Git</b> 菜单、<b>VCS Operations</b> 弹窗；或用 <b>Find Action</b>（<kbd>⌘⇧A</kbd> / <kbd>Ctrl+Shift+A</kbd>）搜索 <code>Slice by Service</code>。插件不预设全局快捷键，可在 <b>Settings → Keymap</b> 搜索 "Branch Knife" 自行绑定。<br/>
-    <b>以某条分支为拆分目标</b>：<b>Git Log 左侧「分支」树</b>的右键菜单由 Git 插件内置写死，第三方<b>不能</b>往该菜单加项。请先在分支树中<b>选中</b>目标分支，再按快捷键或从 Tools/Git 菜单执行（插件读取 Log 分支面板的当前选中项）。在部分 Git 分支弹窗子菜单中触发时，若平台注入了分支列表，亦会以该分支为目标。
+<h2>Branch-Knife — Smart PR Splitter for Monorepos</h2>
+
+<p>
+Branch-Knife helps you split a large feature branch into multiple focused, reviewable pull requests —
+each targeting a different service or module in your monorepo. No more giant PRs that no one wants to review.
+</p>
+
+<h3>How it works</h3>
+<ol>
+  <li>Open the <b>Smart PR Splitter</b> from <b>Tools → Branch-Knife</b>, the <b>Git</b> menu, or right-click a branch in the Git log.</li>
+  <li>Your local changes are shown in a file tree on the left.</li>
+  <li>Branch target cards appear on the right — one per service, auto-detected from your <code>branch-knife.paths</code> config.</li>
+  <li>Review assignments, adjust paths, then click <b>Execute Split</b>.</li>
+</ol>
+
+<h3>Key Features</h3>
+<ul>
+  <li><b>Visual path assignment</b> — Drag files between branch cards; each card has an editable branch name and commit message.</li>
+  <li><b>Hierarchical path tree</b> — Files in each card are shown as a collapsible tree, not a flat list.</li>
+  <li><b>Unassigned file tracking</b> — Files not yet assigned to any branch are highlighted in red in the left tree, including collapsed parent directories. Hover to see the count.</li>
+  <li><b>Smart branch naming</b> — New branches are named <code>{current-branch}-{service}</code> (e.g. <code>feature/my-work-payment-service</code>).</li>
+  <li><b>Move all files</b> — Move all files from one card to another in one click; the empty source card is removed automatically.</li>
+  <li><b>Add from tree / Auto-detect</b> — Select files in the left tree and add them to a card, or let the plugin detect the right card from your path rules.</li>
+  <li><b>Keyboard-friendly</b> — Press <kbd>Delete</kbd> or <kbd>⌫</kbd> to remove selected files or entire directory groups from a card. Right-click for context menu.</li>
+  <li><b>Row hover highlight</b> — Hovering over a path row highlights the entire row for easy targeting.</li>
+  <li><b>branch-knife.paths config</b> — Place a <code>branch-knife.paths</code> file at the repo root to define your own path → service mapping rules. Takes effect immediately; no IDE restart needed.</li>
+  <li><b>branch-knife.base config</b> — Pin the diff base branch (<code>main</code> or <code>master</code>) when both exist in your repo.</li>
+  <li><b>i18n</b> — UI supports English and Chinese; toggle in the top-right corner.</li>
+</ul>
+
+<h3>branch-knife.paths format</h3>
+<pre>
+# one rule per line: path-prefix=service-name
+apps/payment-service=payment-service
+apps/order-service=order-service
+apps/auth-service=auth-service
+# multiple paths for one service:
+apps/order-service/school-service=school-service
+</pre>
+<p>Files not matching any rule are grouped into an <b>Others</b> card for manual assignment.</p>
+
+<h3>Entry Points</h3>
+<ul>
+  <li><b>Tools → Branch-Knife → Slice by Service…</b></li>
+  <li><b>Git menu → Slice by Service…</b></li>
+  <li><b>VCS Operations popup</b> (<kbd>Alt+`</kbd>)</li>
+  <li>Right-click a branch in the <b>Git Log</b> branch panel</li>
+  <li><b>Find Action</b> (<kbd>⌘⇧A</kbd> / <kbd>Ctrl+Shift+A</kbd>) → search <code>Slice by Service</code></li>
+</ul>
+<p>No default global shortcut is set. Bind one in <b>Settings → Keymap → Branch Knife</b>.</p>
     ]]></description>
+
+    <change-notes><![CDATA[
+<h3>0.1.0</h3>
+<ul>
+  <li>Smart PR Splitter dialog with visual branch target cards</li>
+  <li>Hierarchical path tree view inside each card</li>
+  <li>Unassigned file tracking with red highlights in the left file tree</li>
+  <li>Move-all-files action with automatic source card removal</li>
+  <li>Delete key support for removing paths from cards</li>
+  <li>Directory-level deletion (removes all files under a dir)</li>
+  <li>Row hover highlight via alpha compositing</li>
+  <li>Smart branch naming based on current branch + service name</li>
+  <li>branch-knife.paths: unmatched files go to a single Others card (no further splitting)</li>
+  <li>Right-click context menus for move and remove</li>
+</ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>
 
     <actions>
-        <!-- 同一 Action 多入口：Git 菜单、VCS 操作弹窗（如 Alt+` / 右键 VCS）、Tools 子菜单 -->
         <action id="com.maxapp.branchknife.SliceAction"
                 class="com.maxapp.branchknife.SliceAction"
                 text="Slice by Service..."
-                description="将当前分支相对 master/main 的已提交差异按服务目录拆成多个 split 分支">
-            <!-- 分支弹窗 / 分支树中右键某条分支时的菜单（与 Checkout、Merge 等并列） -->
+                description="Split current branch changes into multiple focused branches by service path">
             <add-to-group group-id="Git.Branch" anchor="last"/>
             <add-to-group group-id="Git.Menu" anchor="last"/>
             <add-to-group group-id="Vcs.Operations.Popup" anchor="last"/>
-            <!-- 不设置默认快捷键，避免与用户现有绑定冲突；可在 Settings → Keymap 搜索 "Branch Knife" 自行绑定 -->
         </action>
         <group id="com.maxapp.branchknife.ToolsMenuGroup"
                text="Branch-Knife"
-               description="Monorepo 按路径拆分分支"
+               description="Split monorepo branches by service path"
                popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
             <reference ref="com.maxapp.branchknife.SliceAction"/>

@@ -6,7 +6,7 @@ plugins {
 }
 
 group = providers.gradleProperty("pluginGroup").get()
-version = "0.0.1"
+version = "0.1.0"
 
 repositories {
     mavenCentral()
@@ -31,6 +31,6 @@ tasks.withType<KotlinCompile>().configureEach {
 tasks {
     patchPluginXml {
         sinceBuild.set("232")
-        untilBuild.set("242.*")
+        untilBuild.set("251.*")
     }
 }
