@@ -6,7 +6,7 @@
     指定<strong>目标功能分支</strong>后，用 <code>git diff --name-only</code> 列出相对 <code>master</code>/<code>main</code> 的差异路径（仅枚举文件，不合并）；再对每个服务：<code>checkout</code> 基准 → <code>checkout -b split/*</code> → <code>git checkout 目标分支 -- 路径</code> → <code>commit</code>。结束切回操作前所在分支。<br/>
     在仓库根配置 <code>branch-knife.paths</code>（每行 <code>路径片段=服务名</code>）以匹配你的 monorepo 目录；无此文件时使用内置示例规则。<br/>
     可选 <code>branch-knife.base</code>：单独一行 <code>main</code> 或 <code>master</code>，在两者都存在时固定 diff / checkout 的基准分支（默认先尝试 master 再 main）。<br/><br/>
-    <b>入口</b>：<b>Tools → Branch-Knife</b>、<b>Git</b> 菜单、<b>VCS Operations</b> 弹窗、<b>Find Action</b> 搜 <code>Slice by Service</code>；默认快捷键 <kbd>Ctrl+Alt+Shift+B</kbd>（可在 <b>Settings → Keymap</b> 修改）。<br/>
+    <b>入口</b>：<b>Tools → Branch-Knife</b>、<b>Git</b> 菜单、<b>VCS Operations</b> 弹窗；或用 <b>Find Action</b>（<kbd>⌘⇧A</kbd> / <kbd>Ctrl+Shift+A</kbd>）搜索 <code>Slice by Service</code>。插件不预设全局快捷键，可在 <b>Settings → Keymap</b> 搜索 "Branch Knife" 自行绑定。<br/>
     <b>以某条分支为拆分目标</b>：<b>Git Log 左侧「分支」树</b>的右键菜单由 Git 插件内置写死，第三方<b>不能</b>往该菜单加项。请先在分支树中<b>选中</b>目标分支，再按快捷键或从 Tools/Git 菜单执行（插件读取 Log 分支面板的当前选中项）。在部分 Git 分支弹窗子菜单中触发时，若平台注入了分支列表，亦会以该分支为目标。
     ]]></description>
 
@@ -23,10 +23,7 @@
             <add-to-group group-id="Git.Branch" anchor="last"/>
             <add-to-group group-id="Git.Menu" anchor="last"/>
             <add-to-group group-id="Vcs.Operations.Popup" anchor="last"/>
-            <!-- 默认快捷键；可在 Settings → Keymap 中修改或删除 -->
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift B"/>
-            <keyboard-shortcut keymap="Mac OS X" first-keystroke="ctrl alt shift B"/>
-            <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="ctrl alt shift B"/>
+            <!-- 不设置默认快捷键，避免与用户现有绑定冲突；可在 Settings → Keymap 搜索 "Branch Knife" 自行绑定 -->
         </action>
         <group id="com.maxapp.branchknife.ToolsMenuGroup"
                text="Branch-Knife"

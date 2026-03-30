@@ -38,6 +38,9 @@ import javax.swing.JPanel
  */
 private val GIT_BRANCH_KEY: DataKey<List<*>> = DataKey.create("GitBranchKey")
 
+/** 复用对话框选择的语言，让 Action 内的提示消息与 UI 保持一致。 */
+private fun t(zh: String, en: String) = if (dialogLang == DialogLang.ZH) zh else en
+
 /**
  * 按「目标功能分支」相对 **master / main** 的差异路径，在本地建多个**你命名的功能分支**，便于按模块提 PR。
  *
@@ -92,14 +95,14 @@ class SliceAction : AnAction() {
                 ?: branchUiCtx?.preferredRepo
                 ?: primaryRepository(project)
         if (repo == null) {
-            Messages.showErrorDialog(project, "未找到 Git 仓库。", "Branch-Knife")
+            Messages.showErrorDialog(project, t("未找到 Git 仓库。", "No Git repository found."), "Branch-Knife")
             return
         }
         val root = repo.root
         val branchBeforeRun =
             repo.currentBranchName
                 ?: run {
-                    Messages.showErrorDialog(project, "当前为 detached HEAD，无法记录要切回的分支。", "Branch-Knife")
+                    Messages.showErrorDialog(project, t("当前为 detached HEAD，无法记录要切回的分支。", "Cannot proceed: repository is in detached HEAD state."), "Branch-Knife")
                     return
                 }
         val targetBranch =
@@ -120,7 +123,10 @@ class SliceAction : AnAction() {
         if (targetBranch == baseBranch) {
             Messages.showInfoMessage(
                 project,
-                "目标分支不能与基准分支「$baseBranch」相同。",
+                t(
+                    "目标分支不能与基准分支「$baseBranch」相同。",
+                    "Target branch cannot be the same as the base branch \"$baseBranch\".",
+                ),
                 "Branch-Knife",
             )
             return
@@ -128,8 +134,10 @@ class SliceAction : AnAction() {
         if (paths.isEmpty()) {
             Messages.showInfoMessage(
                 project,
-                "「$baseBranch...$targetBranch」下没有文件路径差异，无需拆分。\n" +
-                    "请确认目标分支上已有相对基准的提交。",
+                t(
+                    "「$baseBranch...$targetBranch」之间没有文件差异，无需拆分。\n请确认目标分支上已有相对基准的提交。",
+                    "No file differences found between \"$baseBranch\" and \"$targetBranch\".\nMake sure the target branch has commits relative to the base.",
+                ),
                 "Branch-Knife",
             )
             return
@@ -138,7 +146,10 @@ class SliceAction : AnAction() {
             val proceed =
                 MessageDialogBuilder.okCancel(
                     "Branch-Knife",
-                    "工作区或暂存区尚有未提交修改，拆分过程会多次 checkout，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
+                    t(
+                        "工作区或暂存区有未提交修改，拆分过程会多次切换分支，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
+                        "You have uncommitted changes. The split process will switch branches multiple times, which may cause conflicts.\nIt is recommended to commit or stash first. Continue anyway?",
+                    ),
                 ).icon(Messages.getWarningIcon())
                     .ask(project)
             if (!proceed) return
@@ -146,7 +157,7 @@ class SliceAction : AnAction() {
         val rules = SlicerService.loadPathRules(root.path)
         val grouped = SlicerService.groupPaths(paths, rules).filterValues { it.isNotEmpty() }
         if (grouped.isEmpty()) {
-            Messages.showInfoMessage(project, "没有可分组的路径。", "Branch-Knife")
+            Messages.showInfoMessage(project, t("没有可分组的路径。", "No paths to group."), "Branch-Knife")
             return
         }
         val dialog =
@@ -162,7 +173,7 @@ class SliceAction : AnAction() {
         if (!dialog.showAndGet()) return
         val targets = dialog.getConfirmedTargets()
         if (targets.isNullOrEmpty()) {
-            Messages.showInfoMessage(project, "未配置任何 PR 目标。", "Branch-Knife")
+            Messages.showInfoMessage(project, t("未配置任何分支目标。", "No branch targets configured."), "Branch-Knife")
             return
         }
         ProgressManager.getInstance().run(
@@ -189,14 +200,10 @@ class SliceAction : AnAction() {
                             val branchList = created.joinToString("\n") { "• $it" }
                             Messages.showInfoMessage(
                                 project,
-                                """
-                                已在本地创建 ${created.size} 个分支（每一步都是：切到「$baseBranch」→ 新建你填写的分支名 → 从「$targetBranch」按路径检出 → 提交）：
-                                
-                                $branchList
-                                
-                                已切回你操作前所在分支「$branchBeforeRun」。
-                                请在 Git → Branches 中查看新建分支并分别 Push 提 PR。
-                                """.trimIndent(),
+                                t(
+                                    "已成功创建 ${created.size} 个分支：\n\n$branchList\n\n已切回「$branchBeforeRun」。",
+                                    "Successfully created ${created.size} branch(es):\n\n$branchList\n\nSwitched back to \"$branchBeforeRun\".",
+                                ),
                                 "Branch-Knife",
                             )
                         }
@@ -319,7 +326,10 @@ class SliceAction : AnAction() {
         if (candidates.isEmpty()) {
             Messages.showErrorDialog(
                 project,
-                "当前在基准分支「$current」，且没有其它本地分支可选。\n请先创建或拉取要拆分的功能分支。",
+                t(
+                    "当前在基准分支「$current」，且没有其它本地分支可选。\n请先创建或拉取要拆分的功能分支。",
+                    "You are on the base branch \"$current\" and there are no other local branches.\nPlease create or pull the feature branch you want to split.",
+                ),
                 "Branch-Knife",
             )
             return null
