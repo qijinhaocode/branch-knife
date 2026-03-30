@@ -33,4 +33,8 @@ tasks {
         sinceBuild.set("232")
         untilBuild.set("251.*")
     }
+    // Branch-Knife has no configurable settings UI, so searchable options are not needed
+    buildSearchableOptions {
+        enabled = false
+    }
 }
