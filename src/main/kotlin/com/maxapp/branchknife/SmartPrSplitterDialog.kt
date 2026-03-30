@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import java.awt.AlphaComposite
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.Color
@@ -22,11 +23,15 @@ import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.event.InputEvent
+import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
+import java.awt.event.MouseMotionAdapter
 import java.awt.image.BufferedImage
 import javax.swing.BorderFactory
 import javax.swing.Box
@@ -40,9 +45,12 @@ import javax.swing.JTree
 import javax.swing.Action
 import javax.swing.JEditorPane
 import javax.swing.ImageIcon
+import javax.swing.JMenuItem
+import javax.swing.JPopupMenu
 import javax.swing.JViewport
 import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
+import javax.swing.SwingUtilities
 import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
@@ -95,6 +103,7 @@ class SmartPrSplitterDialog(
 ) : DialogWrapper(project) {
 
     private val sortedGroups = groupedPaths.entries.sortedBy { it.key }
+    private val fileTreeRenderer = FileIconCellRenderer()
     private val tree: JTree = buildPathsTree(allPaths)
     private val targetsPanel = JPanel()
     private val cards = mutableListOf<BranchTargetCard>()
@@ -121,21 +130,29 @@ class SmartPrSplitterDialog(
     init {
         title = buildTitle()
         setOKButtonText(t("执行拆分", "Execute Split"))
+        tree.cellRenderer = fileTreeRenderer
         tree.selectionModel.selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION
+        // 鼠标进入时缩短 tooltip 延迟，让红色节点的说明立即可见；离开时还原原始值
+        val tooltipMgr = javax.swing.ToolTipManager.sharedInstance()
+        val savedDelay = tooltipMgr.initialDelay
+        tree.addMouseListener(object : MouseAdapter() {
+            override fun mouseEntered(e: MouseEvent) { tooltipMgr.initialDelay = 100 }
+            override fun mouseExited(e: MouseEvent)  { tooltipMgr.initialDelay = savedDelay }
+        })
         targetsPanel.layout = BoxLayout(targetsPanel, BoxLayout.Y_AXIS)
         targetsPanel.border = JBUI.Borders.empty(8)
 
         if (sortedGroups.isNotEmpty()) {
             sortedGroups.forEach { (service, paths) ->
                 addBranchCard(
-                    suggestBranchName(service),
+                    suggestBranchName(targetBranch, service),
                     suggestCommitMessage(service),
                     paths.map { it.replace('\\', '/') }.toMutableList(),
                 )
             }
         } else {
             addBranchCard(
-                "feature/split-${System.currentTimeMillis() % 100000}",
+                suggestBranchName(targetBranch, "split"),
                 "feat: split changes",
                 allPaths.map { it.replace('\\', '/') }.toMutableList(),
             )
@@ -517,6 +534,9 @@ class SmartPrSplitterDialog(
                 .flatMap { listModelStrings(it.pathsListModel) }
                 .map { it.replace('\\', '/') }
                 .toSet()
+        val allNormalized = allPaths.map { it.replace('\\', '/') }.toSet()
+        fileTreeRenderer.unassignedPaths = allNormalized - assigned
+        tree.repaint()
         val total = allPaths.size
         val n = assigned.size
         statusLabel.text =
@@ -592,6 +612,7 @@ class SmartPrSplitterDialog(
             }
         }
 
+
         private lateinit var pathsTree: JTree
         private val pathsCardLayout = CardLayout()
         private val pathsCardPanel = JPanel(pathsCardLayout)
@@ -607,6 +628,13 @@ class SmartPrSplitterDialog(
 
         private val addFromTreeBtn = JButton(t("← 从树添加", "← Add from tree"))
         private val autoDetectBtn = JButton(t("自动检测", "Auto-detect"))
+        private val moveAllBtn =
+            JButton(t("全部移至 →", "Move all to →")).apply {
+                toolTipText = t("将此卡片所有文件一键移入另一个分支目标", "Move all files in this card to another branch target")
+            }
+
+        private var hoveredRow = -1
+        private var hoveredInRemoveZone = false
 
         init {
             // ── Header: [branch icon] [branch name field] [delete btn] ──────
@@ -659,7 +687,20 @@ class SmartPrSplitterDialog(
             initialPaths.sorted().forEach { p -> pathsListModel.addElement(p.replace('\\', '/')) }
 
             pathsTree =
-                JTree(buildPathTreeModel()).apply {
+                object : JTree(buildPathTreeModel()) {
+                    override fun paintComponent(g: Graphics) {
+                        super.paintComponent(g)
+                        // 整行 hover 高亮：semi-transparent 白色叠加，覆盖完整行宽
+                        if (hoveredRow >= 0) {
+                            val bounds = getRowBounds(hoveredRow) ?: return
+                            val g2 = g.create() as Graphics2D
+                            g2.composite = AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.13f)
+                            g2.color = Color.WHITE
+                            g2.fillRect(0, bounds.y, width, bounds.height)
+                            g2.dispose()
+                        }
+                    }
+                }.apply {
                     isRootVisible = false
                     showsRootHandles = true
                     isOpaque = true
@@ -671,15 +712,50 @@ class SmartPrSplitterDialog(
             pathsTree.addMouseListener(
                 object : MouseAdapter() {
                     override fun mouseClicked(e: MouseEvent) {
-                        val tp = pathsTree.getPathForLocation(e.x, e.y) ?: return
+                        // getClosestRowForLocation 不受 cell 宽度限制，行内任意 x 均可命中
+                        val row = pathsTree.getClosestRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: return
+                        val rowBounds = pathsTree.getRowBounds(row) ?: return
+                        if (e.y !in rowBounds.y..(rowBounds.y + rowBounds.height)) return
+                        val tp = pathsTree.getPathForRow(row) ?: return
                         val node = tp.lastPathComponent as? DefaultMutableTreeNode ?: return
-                        val leaf = node.userObject as? PathLeaf ?: return
-                        // × 区域：视口最右 28px
-                        val viewW = (pathsTree.parent as? JViewport)?.width ?: pathsTree.width
-                        if (e.x >= viewW - JBUI.scale(28)) {
-                            pathsListModel.removeElement(leaf.fullPath)
-                            rebuildPathsTree()
-                            onPathsChanged()
+                        // × 区域 = 可见区右边 28px
+                        val inRemove = e.x >= pathsTree.visibleRect.width - JBUI.scale(28)
+                        when {
+                            SwingUtilities.isRightMouseButton(e) -> showNodeContextMenu(e, node)
+                            inRemove -> removeNode(node)
+                        }
+                    }
+                },
+            )
+            pathsTree.addMouseMotionListener(
+                object : MouseMotionAdapter() {
+                    override fun mouseMoved(e: MouseEvent) {
+                        val row = pathsTree.getClosestRowForLocation(e.x, e.y).takeIf { it >= 0 } ?: run {
+                            resetHover(); return
+                        }
+                        val rb = pathsTree.getRowBounds(row) ?: run { resetHover(); return }
+                        if (e.y !in rb.y..(rb.y + rb.height)) { resetHover(); return }
+                        val inRemove = e.x >= pathsTree.visibleRect.width - JBUI.scale(28)
+                        if (hoveredRow != row || hoveredInRemoveZone != inRemove) {
+                            hoveredRow = row
+                            hoveredInRemoveZone = inRemove
+                            pathsTree.repaint()
+                        }
+                        pathsTree.cursor =
+                            if (inRemove) java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                            else java.awt.Cursor.getDefaultCursor()
+                    }
+                },
+            )
+            // Delete / Backspace 键删除选中节点
+            pathsTree.addKeyListener(
+                object : KeyAdapter() {
+                    override fun keyPressed(e: KeyEvent) {
+                        if (e.keyCode != KeyEvent.VK_DELETE && e.keyCode != KeyEvent.VK_BACK_SPACE) return
+                        val sel = pathsTree.selectionPaths ?: return
+                        sel.forEach { tp ->
+                            val n = tp.lastPathComponent as? DefaultMutableTreeNode ?: return@forEach
+                            removeNode(n)
                         }
                     }
                 },
@@ -689,7 +765,7 @@ class SmartPrSplitterDialog(
                 JBScrollPane(pathsTree).apply {
                     border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                     preferredSize = Dimension(0, JBUI.scale(100))
                     maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(180))
                     viewport.background = pathsBg
@@ -723,9 +799,10 @@ class SmartPrSplitterDialog(
 
             rebuildPathsTree()
 
-            // ── Bottom bar: 2 buttons ────────────────────────────────────────
+            // ── Bottom bar: 3 buttons ────────────────────────────────────────
             addFromTreeBtn.addActionListener { onAddFromTree(this@BranchTargetCard) }
             autoDetectBtn.addActionListener { onAutoDetect(this@BranchTargetCard) }
+            moveAllBtn.addActionListener { e -> showMoveAllContextMenu(e) }
 
             val bottomBar =
                 JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
@@ -733,6 +810,7 @@ class SmartPrSplitterDialog(
                     alignmentX = Component.LEFT_ALIGNMENT
                     add(addFromTreeBtn)
                     add(autoDetectBtn)
+                    add(moveAllBtn)
                 }
 
             // ── Assemble content ─────────────────────────────────────────────
@@ -794,15 +872,125 @@ class SmartPrSplitterDialog(
             pathsTree.model = buildPathTreeModel()
             expandAllNodes()
             pathsCardLayout.show(pathsCardPanel, if (pathsListModel.isEmpty) "empty" else "tree")
-            pathsTree.revalidate()
-            pathsTree.repaint()
+        }
+
+        // ── Context menu: move files to another branch card ──────────────────
+
+        private fun showMoveAllContextMenu(trigger: java.awt.event.ActionEvent) {
+            if (pathsListModel.isEmpty) return
+            val popup = JPopupMenu()
+            val otherCards = cards.filter { it !== this@BranchTargetCard }
+            if (otherCards.isEmpty()) {
+                popup.add(
+                    JMenuItem(t("暂无其他分支目标", "No other branch targets")).apply { isEnabled = false },
+                )
+            } else {
+                popup.add(JMenuItem(t("全部移入分支 →", "Move all to branch →")).apply { isEnabled = false })
+                popup.addSeparator()
+                for (target in otherCards) {
+                    val name = target.branchField.text.ifBlank { t("(未命名)", "(unnamed)") }
+                    popup.add(
+                        JMenuItem(name).apply {
+                            addActionListener {
+                                val allPaths = listModelStrings(pathsListModel).toList()
+                                allPaths.forEach { target.addPathIfAbsent(it) }
+                                // 移动完成后直接删除这张卡片（文件已转移，卡片已无内容）
+                                SwingUtilities.invokeLater { onRemoveThisTarget() }
+                            }
+                        },
+                    )
+                }
+            }
+            val btn = trigger.source as? java.awt.Component ?: moveAllBtn
+            popup.show(btn, 0, btn.height)
+        }
+
+        // ── Node removal helpers ─────────────────────────────────────────────
+
+        private fun resetHover() {
+            if (hoveredRow != -1) {
+                hoveredRow = -1
+                hoveredInRemoveZone = false
+                pathsTree.repaint()
+            }
+            pathsTree.cursor = java.awt.Cursor.getDefaultCursor()
+        }
+
+        /** 收集节点及其所有后代叶子节点 */
+        private fun collectAllLeaves(node: DefaultMutableTreeNode): List<PathLeaf> {
+            val result = mutableListOf<PathLeaf>()
+            when (val obj = node.userObject) {
+                is PathLeaf -> result.add(obj)
+                else -> for (i in 0 until node.childCount) {
+                    result.addAll(collectAllLeaves(node.getChildAt(i) as DefaultMutableTreeNode))
+                }
+            }
+            return result
+        }
+
+        /** 删除节点下所有文件，目录节点会递归删除所有子文件 */
+        private fun removeNode(node: DefaultMutableTreeNode) {
+            val leaves = collectAllLeaves(node)
+            if (leaves.isEmpty()) return
+            leaves.forEach { pathsListModel.removeElement(it.fullPath) }
+            rebuildPathsTree()
+            onPathsChanged()
+        }
+
+        /** 右键菜单：单个文件或整个目录节点 */
+        private fun showNodeContextMenu(e: MouseEvent, node: DefaultMutableTreeNode) {
+            val leaves = collectAllLeaves(node)
+            if (leaves.isEmpty()) return
+            val popup = JPopupMenu()
+            val isDir = node.userObject !is PathLeaf
+            // Remove item
+            val removeLabel = if (isDir)
+                t("删除目录下所有文件", "Remove all files in dir")
+            else t("移除", "Remove")
+            popup.add(JMenuItem(removeLabel).apply { addActionListener { removeNode(node) } })
+            // Move submenu
+            val otherCards = cards.filter { it !== this@BranchTargetCard }
+            if (otherCards.isNotEmpty()) {
+                popup.addSeparator()
+                val moveLabel = if (isDir)
+                    t("目录移入分支 →", "Move dir to →")
+                else t("移入分支 →", "Move to branch →")
+                popup.add(JMenuItem(moveLabel).apply { isEnabled = false })
+                for (target in otherCards) {
+                    val name = target.branchField.text.ifBlank { t("(未命名)", "(unnamed)") }
+                    popup.add(JMenuItem(name).apply {
+                        addActionListener {
+                            leaves.forEach { pathsListModel.removeElement(it.fullPath) }
+                            rebuildPathsTree()
+                            leaves.forEach { target.addPathIfAbsent(it.fullPath) }
+                            onPathsChanged()
+                        }
+                    })
+                }
+            }
+            popup.show(pathsTree, e.x, e.y)
         }
 
         // ── Cell renderer ────────────────────────────────────────────────────
 
         private inner class PathTreeCellRenderer : TreeCellRenderer {
-            private val leafPanel = JPanel(BorderLayout(4, 0))
-            private val dirPanel = JPanel(BorderLayout(4, 0))
+            // 让每行宽度撑满整棵树宽度，确保 × 始终在可见区域右侧
+            private val leafPanel =
+                object : JPanel(BorderLayout(4, 0)) {
+                    override fun getPreferredSize(): Dimension {
+                        val base = super.getPreferredSize()
+                        val w = pathsTree.width.takeIf { it > 0 } ?: return base
+                        return Dimension(maxOf(base.width, w), base.height)
+                    }
+                }
+            private val dirPanel =
+                object : JPanel(BorderLayout(4, 0)) {
+                    override fun getPreferredSize(): Dimension {
+                        val base = super.getPreferredSize()
+                        val w = pathsTree.width.takeIf { it > 0 } ?: return base
+                        return Dimension(maxOf(base.width, w), base.height)
+                    }
+                }
 
             private val leafIcon = JLabel(AllIcons.FileTypes.Text)
             private val leafText = JLabel()
@@ -818,6 +1006,15 @@ class SmartPrSplitterDialog(
 
             private val dirIcon = JLabel(AllIcons.Nodes.Folder)
             private val dirText = JLabel()
+            private val dirRemove =
+                JLabel("×").apply {
+                    font = font.deriveFont(Font.BOLD, 13f)
+                    foreground = UIUtil.getInactiveTextColor()
+                    border = JBUI.Borders.empty(0, 6, 0, 4)
+                    horizontalAlignment = JLabel.CENTER
+                    preferredSize = Dimension(JBUI.scale(22), JBUI.scale(18))
+                    toolTipText = t("删除目录下所有文件", "Remove all files in dir")
+                }
 
             init {
                 for (p in listOf(leafPanel, dirPanel)) {
@@ -831,6 +1028,7 @@ class SmartPrSplitterDialog(
                 leafPanel.add(leafRemove, BorderLayout.EAST)
                 dirPanel.add(dirIcon, BorderLayout.WEST)
                 dirPanel.add(dirText, BorderLayout.CENTER)
+                dirPanel.add(dirRemove, BorderLayout.EAST)
             }
 
             override fun getTreeCellRendererComponent(
@@ -843,18 +1041,26 @@ class SmartPrSplitterDialog(
                 hasFocus: Boolean,
             ): Component {
                 val node = value as? DefaultMutableTreeNode ?: return leafPanel
+                val isHovered = row == hoveredRow
                 val bg = if (selected) UIUtil.getTreeSelectionBackground(hasFocus) else pathsBg
                 val fg = if (selected) UIUtil.getTreeSelectionForeground(hasFocus) else UIUtil.getTreeForeground()
+                // × 按钮：进入 remove zone 时变红；普通 hover 时稍微亮一点
+                val removeFg =
+                    if (isHovered && hoveredInRemoveZone) JBColor.RED
+                    else if (isHovered) UIUtil.getLabelForeground()
+                    else UIUtil.getInactiveTextColor()
                 return when (val obj = node.userObject) {
                     is PathLeaf -> {
                         leafText.text = obj.label
                         leafText.foreground = fg
+                        leafRemove.foreground = removeFg
                         leafPanel.background = bg
                         leafPanel
                     }
                     else -> {
                         dirText.text = obj.toString()
                         dirText.foreground = fg
+                        dirRemove.foreground = removeFg
                         dirPanel.background = bg
                         dirPanel
                     }
@@ -867,6 +1073,7 @@ class SmartPrSplitterDialog(
         fun refreshLang() {
             addFromTreeBtn.text = t("← 从树添加", "← Add from tree")
             autoDetectBtn.text = t("自动检测", "Auto-detect")
+            moveAllBtn.text = t("全部移至 →", "Move all to →")
         }
 
         fun addPathIfAbsent(p: String) {
@@ -960,6 +1167,20 @@ private sealed class PathTrie {
 
 /** 为左侧文件树的叶节点展示 IDEA 原生文件类型图标。 */
 private class FileIconCellRenderer : DefaultTreeCellRenderer() {
+
+    /** 未分配的叶节点全路径集合；赋值时自动推导所有祖先路径 */
+    var unassignedPaths: Set<String> = emptySet()
+        set(value) {
+            field = value
+            // 预计算所有含未分配文件的祖先目录路径（如 "apps", "apps/order-service"）
+            unassignedAncestors = value.flatMap { path ->
+                val parts = path.split('/')
+                (1 until parts.size).map { i -> parts.take(i).joinToString("/") }
+            }.toSet()
+        }
+
+    private var unassignedAncestors: Set<String> = emptySet()
+
     override fun getTreeCellRendererComponent(
         tree: JTree,
         value: Any?,
@@ -971,10 +1192,41 @@ private class FileIconCellRenderer : DefaultTreeCellRenderer() {
     ): Component {
         super.getTreeCellRendererComponent(tree, value, selected, expanded, leaf, row, hasFocus)
         val node = value as? DefaultMutableTreeNode ?: return this
-        val userObj = node.userObject
-        if (userObj is PathTrie.Leaf) {
-            val fileName = userObj.fullPath.substringAfterLast('/')
-            FileTypeManager.getInstance().getFileTypeByFileName(fileName).icon?.let { icon = it }
+        when (val userObj = node.userObject) {
+            is PathTrie.Leaf -> {
+                val fileName = userObj.fullPath.substringAfterLast('/')
+                FileTypeManager.getInstance().getFileTypeByFileName(fileName).icon?.let { icon = it }
+                val isUnassigned = userObj.fullPath.replace('\\', '/') in unassignedPaths
+                if (isUnassigned) {
+                    toolTipText = "Not yet assigned to any branch"
+                    if (selected) {
+                        background = JBColor(Color(0xA93226), Color(0x922B21))
+                        foreground = Color.WHITE
+                    } else {
+                        foreground = JBColor(Color(0xC0392B), Color(0xFF7675))
+                    }
+                } else {
+                    toolTipText = null
+                }
+            }
+            is PathTrie.Dir -> {
+                // 重建此目录节点的完整路径（跳过根节点）
+                val fullPath = node.path.drop(1)
+                    .mapNotNull { ((it as? DefaultMutableTreeNode)?.userObject as? PathTrie.Dir)?.name }
+                    .joinToString("/")
+                if (fullPath.isNotEmpty() && fullPath in unassignedAncestors) {
+                    // 与叶节点统一用红色，折叠时父目录同样醒目
+                    if (!selected) foreground = JBColor(Color(0xC0392B), Color(0xFF7675))
+                    // 计算此目录下未分配文件数，tooltip 说明原因
+                    val count = unassignedPaths.count { it.startsWith("$fullPath/") }
+                    toolTipText = if (count > 0)
+                        "$count file(s) not yet assigned to any branch"
+                    else null
+                } else {
+                    toolTipText = null
+                }
+            }
+            else -> {}
         }
         return this
     }
@@ -1020,13 +1272,19 @@ private fun insertPathIntoTree(root: DefaultMutableTreeNode, path: String) {
     }
 }
 
-private fun suggestBranchName(service: String): String =
-    "feature/" +
-        service
-            .lowercase()
-            .replace(Regex("[^a-z0-9]+"), "-")
-            .trim('-')
-            .ifEmpty { "split" }
+/** currentBranch = 当前正在工作的分支（对话框标题左边那个），即 targetBranch 字段 */
+private fun suggestBranchName(currentBranch: String, service: String): String {
+    val serviceSlug = service
+        .lowercase()
+        .replace(Regex("[^a-z0-9]+"), "-")
+        .trim('-')
+        .ifEmpty { "split" }
+    val cleanBase = currentBranch
+        .removePrefix("refs/heads/")
+        .replace(Regex("^refs/remotes/[^/]+/"), "")
+        .trim()
+    return "$cleanBase-$serviceSlug"
+}
 
 private fun suggestCommitMessage(service: String): String = "feat: update $service"
 

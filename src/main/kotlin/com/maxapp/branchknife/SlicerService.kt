@@ -84,7 +84,9 @@ object SlicerService {
                 .filter { it.isNotEmpty() }
                 .distinct()
         val raw = normalized.groupBy { serviceName(it, rules) }
-        return splitOthersByDirectoryPrefix(raw)
+        // 用户已有 .paths 配置时，漏网文件统一进单一 Others 卡，由用户手动决定归属；
+        // 只有纯内置 fallback 时才按目录前缀二次拆分。
+        return if (rules.useBuiltInFallback) splitOthersByDirectoryPrefix(raw) else raw
     }
 
     /**
