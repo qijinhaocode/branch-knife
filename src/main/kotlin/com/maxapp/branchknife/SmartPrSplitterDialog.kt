@@ -1,5 +1,6 @@
 package com.maxapp.branchknife
 
+import com.intellij.icons.AllIcons
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.openapi.project.Project
@@ -9,7 +10,6 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.Splitter
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.ui.DocumentAdapter
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
@@ -34,8 +34,7 @@ import javax.swing.JTree
 import javax.swing.Action
 import javax.swing.JEditorPane
 import javax.swing.KeyStroke
-import javax.swing.ListSelectionModel
-import javax.swing.border.TitledBorder
+import javax.swing.ScrollPaneConstants
 import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
@@ -544,61 +543,111 @@ class SmartPrSplitterDialog(
         val branchField = JBTextField(defaultBranch)
         val commitField = JBTextField(defaultMessage)
         val pathsListModel = DefaultListModel<String>()
-        private val pathsList =
-            JBList(pathsListModel).apply {
-                visibleRowCount = 4
-                selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
+
+        private val pathsContainer =
+            JPanel().apply {
+                layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                isOpaque = false
             }
 
-        private val titledBorder: TitledBorder =
-            BorderFactory.createTitledBorder(t("分支目标", "Branch Target"))
+        private val pathsPlaceholder =
+            JLabel(t("← 在左侧树中选择文件后点「从树添加」", "← Select files in the tree, then click 'Add from tree'")).apply {
+                foreground = UIUtil.getInactiveTextColor()
+                border = JBUI.Borders.empty(6, 4)
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+
         val panel: JPanel =
             JPanel(BorderLayout()).apply {
-                border = BorderFactory.createCompoundBorder(titledBorder, JBUI.Borders.empty(8))
+                border =
+                    BorderFactory.createCompoundBorder(
+                        BorderFactory.createLineBorder(UIUtil.getSeparatorColor()),
+                        JBUI.Borders.empty(10, 12, 10, 12),
+                    )
             }
 
-        private val branchLabel = JLabel(t("分支名", "Branch name"))
-        private val commitLabel = JLabel(t("提交说明", "Commit message"))
-        private val includedPathsLabel = JLabel(t("包含路径", "Included paths"))
         private val addFromTreeBtn = JButton(t("← 从树添加", "← Add from tree"))
         private val autoDetectBtn = JButton(t("自动检测", "Auto-detect"))
-        private val removePathsBtn = JButton(t("移除路径", "Remove paths"))
-        private val removeBranchBtn = JButton(t("删除此目标", "Remove this branch"))
 
         init {
-            initialPaths.sorted().forEach { pathsListModel.addElement(it.replace('\\', '/')) }
+            // ── Header: [branch icon] [branch name field] [delete btn] ──────
+            branchField.apply {
+                font = font.deriveFont(Font.BOLD)
+                border = JBUI.Borders.empty(1, 4)
+                isOpaque = false
+            }
 
-            val north =
-                JPanel().apply {
-                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                    add(labeled(branchLabel, branchField))
-                    add(Box.createVerticalStrut(JBUI.scale(4)))
-                    add(labeled(commitLabel, commitField))
+            val deleteBtn =
+                JButton(AllIcons.General.Remove).apply {
+                    isContentAreaFilled = false
+                    isBorderPainted = false
+                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                    toolTipText = t("删除此目标", "Remove this branch")
+                    addActionListener { onRemoveThisTarget() }
                 }
-            panel.add(north, BorderLayout.NORTH)
 
+            val headerRow =
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.empty(0, 0, 8, 0)
+                    add(
+                        JLabel(AllIcons.Vcs.Branch).apply { border = JBUI.Borders.empty(0, 0, 0, 6) },
+                        BorderLayout.WEST,
+                    )
+                    add(branchField, BorderLayout.CENTER)
+                    add(deleteBtn, BorderLayout.EAST)
+                }
+
+            // ── Commit field ─────────────────────────────────────────────────
+            commitField.apply {
+                emptyText.text = t("提交说明…", "Commit message…")
+                maximumSize = Dimension(Int.MAX_VALUE, preferredSize.height)
+                alignmentX = Component.LEFT_ALIGNMENT
+            }
+
+            // ── Paths scroll area ────────────────────────────────────────────
+            initialPaths.sorted().forEach { p ->
+                val n = p.replace('\\', '/')
+                pathsListModel.addElement(n)
+            }
+            rebuildPathsContainer()
+
+            val pathsScroll =
+                JBScrollPane(pathsContainer).apply {
+                    border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
+                    verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
+                    preferredSize = Dimension(0, JBUI.scale(90))
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(160))
+                    alignmentX = Component.LEFT_ALIGNMENT
+                }
+
+            // ── Bottom bar: 2 buttons ────────────────────────────────────────
             addFromTreeBtn.addActionListener { onAddFromTree(this@BranchTargetCard) }
             autoDetectBtn.addActionListener { onAutoDetect(this@BranchTargetCard) }
-            removePathsBtn.addActionListener {
-                pathsList.selectedIndices.sortedDescending().forEach { pathsListModel.remove(it) }
-                onPathsChanged()
-            }
-            removeBranchBtn.addActionListener { onRemoveThisTarget() }
 
-            val pathBar =
+            val bottomBar =
                 JPanel(FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0)).apply {
+                    isOpaque = false
+                    alignmentX = Component.LEFT_ALIGNMENT
                     add(addFromTreeBtn)
                     add(autoDetectBtn)
-                    add(removePathsBtn)
-                    add(removeBranchBtn)
                 }
-            val pathWrap =
-                JPanel(BorderLayout()).apply {
-                    add(includedPathsLabel, BorderLayout.NORTH)
-                    add(JBScrollPane(pathsList), BorderLayout.CENTER)
-                    add(pathBar, BorderLayout.SOUTH)
+
+            // ── Assemble content ─────────────────────────────────────────────
+            val contentPanel =
+                JPanel().apply {
+                    layout = BoxLayout(this, BoxLayout.Y_AXIS)
+                    isOpaque = false
+                    add(commitField)
+                    add(Box.createVerticalStrut(JBUI.scale(6)))
+                    add(pathsScroll)
+                    add(Box.createVerticalStrut(JBUI.scale(6)))
+                    add(bottomBar)
                 }
-            panel.add(pathWrap, BorderLayout.CENTER)
+
+            panel.add(headerRow, BorderLayout.NORTH)
+            panel.add(contentPanel, BorderLayout.CENTER)
 
             val docL =
                 object : DocumentAdapter() {
@@ -608,23 +657,85 @@ class SmartPrSplitterDialog(
             commitField.document.addDocumentListener(docL)
         }
 
+        private fun buildPathRow(path: String): JPanel {
+            val fileName = path.substringAfterLast('/')
+            val fileIcon =
+                try {
+                    FileTypeManager.getInstance().getFileTypeByFileName(fileName).icon
+                        ?: AllIcons.FileTypes.Text
+                } catch (_: Exception) {
+                    AllIcons.FileTypes.Text
+                }
+
+            val removeBtn =
+                JButton("×").apply {
+                    isContentAreaFilled = false
+                    isBorderPainted = false
+                    font = font.deriveFont(Font.BOLD)
+                    foreground = UIUtil.getInactiveTextColor()
+                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+                    toolTipText = t("移除", "Remove")
+                    preferredSize = Dimension(JBUI.scale(22), JBUI.scale(22))
+                }
+
+            val row =
+                JPanel(BorderLayout()).apply {
+                    isOpaque = false
+                    border = JBUI.Borders.empty(2, 6, 2, 4)
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(26))
+                    alignmentX = Component.LEFT_ALIGNMENT
+                    add(
+                        JLabel(fileIcon).apply { border = JBUI.Borders.empty(0, 0, 0, 5) },
+                        BorderLayout.WEST,
+                    )
+                    add(JLabel(path).apply { toolTipText = path }, BorderLayout.CENTER)
+                    add(removeBtn, BorderLayout.EAST)
+                }
+
+            removeBtn.addActionListener {
+                pathsListModel.removeElement(path)
+                pathsContainer.remove(row)
+                pathsContainer.revalidate()
+                pathsContainer.repaint()
+                updateEmptyState()
+                onPathsChanged()
+            }
+
+            return row
+        }
+
+        private fun rebuildPathsContainer() {
+            pathsContainer.removeAll()
+            pathsContainer.add(pathsPlaceholder)
+            listModelStrings(pathsListModel).forEach { p -> pathsContainer.add(buildPathRow(p)) }
+            updateEmptyState()
+            pathsContainer.revalidate()
+            pathsContainer.repaint()
+        }
+
+        private fun updateEmptyState() {
+            pathsPlaceholder.text =
+                t(
+                    "← 在左侧树中选择文件后点「从树添加」",
+                    "← Select files in the tree, then click 'Add from tree'",
+                )
+            pathsPlaceholder.isVisible = pathsListModel.isEmpty
+        }
+
         fun refreshLang() {
-            titledBorder.title = t("分支目标", "Branch Target")
-            panel.revalidate()
-            panel.repaint()
-            branchLabel.text = t("分支名", "Branch name")
-            commitLabel.text = t("提交说明", "Commit message")
-            includedPathsLabel.text = t("包含路径", "Included paths")
             addFromTreeBtn.text = t("← 从树添加", "← Add from tree")
             autoDetectBtn.text = t("自动检测", "Auto-detect")
-            removePathsBtn.text = t("移除路径", "Remove paths")
-            removeBranchBtn.text = t("删除此目标", "Remove this branch")
+            updateEmptyState()
         }
 
         fun addPathIfAbsent(p: String) {
             val n = p.replace('\\', '/')
             if (listModelStrings(pathsListModel).none { it.replace('\\', '/') == n }) {
                 pathsListModel.addElement(n)
+                pathsContainer.add(buildPathRow(n))
+                updateEmptyState()
+                pathsContainer.revalidate()
+                pathsContainer.repaint()
                 onPathsChanged()
             }
         }
@@ -632,15 +743,10 @@ class SmartPrSplitterDialog(
         fun setPaths(paths: MutableList<String>) {
             pathsListModel.clear()
             paths.sorted().map { it.replace('\\', '/') }.forEach { pathsListModel.addElement(it) }
+            rebuildPathsContainer()
             onPathsChanged()
         }
     }
-
-    private fun labeled(label: JLabel, field: JBTextField): JPanel =
-        JPanel(BorderLayout()).apply {
-            add(label, BorderLayout.NORTH)
-            add(field, BorderLayout.CENTER)
-        }
 }
 
 // ── Help dialog (proper HTML renderer) ───────────────────────────────────────
