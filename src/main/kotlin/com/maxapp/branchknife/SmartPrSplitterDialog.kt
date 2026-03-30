@@ -40,12 +40,14 @@ import javax.swing.JTree
 import javax.swing.Action
 import javax.swing.JEditorPane
 import javax.swing.ImageIcon
+import javax.swing.JViewport
 import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
 import javax.swing.event.DocumentEvent
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeCellRenderer
 import javax.swing.tree.DefaultTreeModel
+import javax.swing.tree.TreeCellRenderer
 import javax.swing.tree.TreeSelectionModel
 
 /** 每个目标分支：本地分支名 + 提交说明 + 要从目标功能分支检出的相对路径 */
@@ -536,6 +538,11 @@ class SmartPrSplitterDialog(
         )
     }
 
+    // ── Shared data types ─────────────────────────────────────────────────────
+
+    /** 路径树的叶节点：记录完整路径和文件名（用于 × 删除）。 */
+    private data class PathLeaf(val fullPath: String, val label: String)
+
     // ── Icon utilities ────────────────────────────────────────────────────────
 
     /** 将任意 Icon 的非透明像素替换为指定颜色，实现单色着色。 */
@@ -574,28 +581,20 @@ class SmartPrSplitterDialog(
         val commitField = JBTextField(defaultMessage)
         val pathsListModel = DefaultListModel<String>()
 
-        private val pathsContainer =
-            JPanel().apply {
-                layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                isOpaque = true
-                background = run {
-                    val base = UIUtil.getTextFieldBackground()
-                    (1..3).fold(base) { c, _ ->
-                        Color(
-                            (c.red * 0.82).toInt().coerceIn(0, 255),
-                            (c.green * 0.82).toInt().coerceIn(0, 255),
-                            (c.blue * 0.82).toInt().coerceIn(0, 255),
-                        )
-                    }
-                }
+        private val pathsBg: Color = run {
+            val base = UIUtil.getTextFieldBackground()
+            (1..3).fold(base) { c, _ ->
+                Color(
+                    (c.red * 0.82).toInt().coerceIn(0, 255),
+                    (c.green * 0.82).toInt().coerceIn(0, 255),
+                    (c.blue * 0.82).toInt().coerceIn(0, 255),
+                )
             }
+        }
 
-        private val pathsPlaceholder =
-            JLabel(t("← 在左侧树中选择文件后点「从树添加」", "← Select files in the tree, then click 'Add from tree'")).apply {
-                foreground = UIUtil.getInactiveTextColor()
-                border = JBUI.Borders.empty(6, 4)
-                alignmentX = Component.LEFT_ALIGNMENT
-            }
+        private lateinit var pathsTree: JTree
+        private val pathsCardLayout = CardLayout()
+        private val pathsCardPanel = JPanel(pathsCardLayout)
 
         val panel: JPanel =
             JPanel(BorderLayout()).apply {
@@ -656,23 +655,73 @@ class SmartPrSplitterDialog(
                 alignmentX = Component.LEFT_ALIGNMENT
             }
 
-            // ── Paths scroll area ────────────────────────────────────────────
-            initialPaths.sorted().forEach { p ->
-                val n = p.replace('\\', '/')
-                pathsListModel.addElement(n)
-            }
-            rebuildPathsContainer()
+            // ── Paths tree ───────────────────────────────────────────────────
+            initialPaths.sorted().forEach { p -> pathsListModel.addElement(p.replace('\\', '/')) }
+
+            pathsTree =
+                JTree(buildPathTreeModel()).apply {
+                    isRootVisible = false
+                    showsRootHandles = true
+                    isOpaque = true
+                    background = pathsBg
+                    border = JBUI.Borders.empty(4, 2)
+                    selectionModel.selectionMode = TreeSelectionModel.DISCONTIGUOUS_TREE_SELECTION
+                    cellRenderer = PathTreeCellRenderer()
+                }
+            pathsTree.addMouseListener(
+                object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        val tp = pathsTree.getPathForLocation(e.x, e.y) ?: return
+                        val node = tp.lastPathComponent as? DefaultMutableTreeNode ?: return
+                        val leaf = node.userObject as? PathLeaf ?: return
+                        // × 区域：视口最右 28px
+                        val viewW = (pathsTree.parent as? JViewport)?.width ?: pathsTree.width
+                        if (e.x >= viewW - JBUI.scale(28)) {
+                            pathsListModel.removeElement(leaf.fullPath)
+                            rebuildPathsTree()
+                            onPathsChanged()
+                        }
+                    }
+                },
+            )
 
             val pathsScroll =
-                JBScrollPane(pathsContainer).apply {
+                JBScrollPane(pathsTree).apply {
                     border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
-                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
-                    preferredSize = Dimension(0, JBUI.scale(90))
-                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(160))
-                    alignmentX = Component.LEFT_ALIGNMENT
-                    viewport.background = pathsContainer.background
+                    horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED
+                    preferredSize = Dimension(0, JBUI.scale(100))
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(180))
+                    viewport.background = pathsBg
                 }
+
+            // ── Empty state placeholder ──────────────────────────────────────
+            val emptyPanel =
+                JPanel(BorderLayout()).apply {
+                    isOpaque = true
+                    background = pathsBg
+                    border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
+                    add(
+                        JLabel(
+                            t("← 在左侧树中选择文件，点「从树添加」", "← Select files in the left tree, then click 'Add from tree'"),
+                        ).apply {
+                            foreground = UIUtil.getInactiveTextColor()
+                            horizontalAlignment = JLabel.CENTER
+                            border = JBUI.Borders.empty(12)
+                        },
+                        BorderLayout.CENTER,
+                    )
+                    preferredSize = Dimension(0, JBUI.scale(60))
+                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(60))
+                }
+
+            pathsCardPanel.apply {
+                alignmentX = Component.LEFT_ALIGNMENT
+                add(pathsScroll, "tree")
+                add(emptyPanel, "empty")
+            }
+
+            rebuildPathsTree()
 
             // ── Bottom bar: 2 buttons ────────────────────────────────────────
             addFromTreeBtn.addActionListener { onAddFromTree(this@BranchTargetCard) }
@@ -693,7 +742,7 @@ class SmartPrSplitterDialog(
                     isOpaque = false
                     add(commitField)
                     add(Box.createVerticalStrut(JBUI.scale(6)))
-                    add(pathsScroll)
+                    add(pathsCardPanel)
                     add(Box.createVerticalStrut(JBUI.scale(6)))
                     add(bottomBar)
                 }
@@ -709,85 +758,122 @@ class SmartPrSplitterDialog(
             commitField.document.addDocumentListener(docL)
         }
 
-        private fun buildPathRow(path: String): JPanel {
-            val fileIcon = AllIcons.Nodes.Folder
+        // ── Tree model builder ───────────────────────────────────────────────
 
-            val inactiveColor = UIUtil.getInactiveTextColor()
-            val removeBtn =
-                JButton("×").apply {
-                    isContentAreaFilled = false
-                    isBorderPainted = false
-                    font = font.deriveFont(Font.BOLD, 14f)
-                    foreground = inactiveColor
-                    cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
+        private fun buildPathTreeModel(): DefaultTreeModel {
+            val root = DefaultMutableTreeNode("root")
+            val dirNodes = LinkedHashMap<String, DefaultMutableTreeNode>()
+
+            listModelStrings(pathsListModel).sorted().forEach { filePath ->
+                val parts = filePath.split('/').filter { it.isNotEmpty() }
+                if (parts.isEmpty()) return@forEach
+                var currentNode = root
+                var currentPath = ""
+                for (i in 0 until parts.size - 1) {
+                    val part = parts[i]
+                    currentPath = if (currentPath.isEmpty()) part else "$currentPath/$part"
+                    currentNode =
+                        dirNodes.getOrPut(currentPath) {
+                            DefaultMutableTreeNode(part).also { currentNode.add(it) }
+                        }
+                }
+                currentNode.add(DefaultMutableTreeNode(PathLeaf(filePath, parts.last())))
+            }
+            return DefaultTreeModel(root)
+        }
+
+        private fun expandAllNodes() {
+            var i = 0
+            while (i < pathsTree.rowCount) {
+                pathsTree.expandRow(i)
+                i++
+            }
+        }
+
+        private fun rebuildPathsTree() {
+            pathsTree.model = buildPathTreeModel()
+            expandAllNodes()
+            pathsCardLayout.show(pathsCardPanel, if (pathsListModel.isEmpty) "empty" else "tree")
+            pathsTree.revalidate()
+            pathsTree.repaint()
+        }
+
+        // ── Cell renderer ────────────────────────────────────────────────────
+
+        private inner class PathTreeCellRenderer : TreeCellRenderer {
+            private val leafPanel = JPanel(BorderLayout(4, 0))
+            private val dirPanel = JPanel(BorderLayout(4, 0))
+
+            private val leafIcon = JLabel(AllIcons.FileTypes.Text)
+            private val leafText = JLabel()
+            private val leafRemove =
+                JLabel("×").apply {
+                    font = font.deriveFont(Font.BOLD, 13f)
+                    foreground = UIUtil.getInactiveTextColor()
+                    border = JBUI.Borders.empty(0, 6, 0, 4)
+                    horizontalAlignment = JLabel.CENTER
+                    preferredSize = Dimension(JBUI.scale(22), JBUI.scale(18))
                     toolTipText = t("移除", "Remove")
-                    preferredSize = Dimension(JBUI.scale(22), JBUI.scale(22))
-                    addMouseListener(
-                        object : MouseAdapter() {
-                            override fun mouseEntered(e: MouseEvent) { foreground = JBColor.RED }
-                            override fun mouseExited(e: MouseEvent) { foreground = inactiveColor }
-                        },
-                    )
                 }
 
-            val row =
-                JPanel(BorderLayout()).apply {
-                    isOpaque = false
-                    border = JBUI.Borders.empty(2, 6, 2, 4)
-                    maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(26))
-                    alignmentX = Component.LEFT_ALIGNMENT
-                    add(
-                        JLabel(fileIcon).apply { border = JBUI.Borders.empty(0, 0, 0, 5) },
-                        BorderLayout.WEST,
-                    )
-                    add(JLabel(path).apply { toolTipText = path }, BorderLayout.CENTER)
-                    add(removeBtn, BorderLayout.EAST)
-                }
+            private val dirIcon = JLabel(AllIcons.Nodes.Folder)
+            private val dirText = JLabel()
 
-            removeBtn.addActionListener {
-                pathsListModel.removeElement(path)
-                pathsContainer.remove(row)
-                pathsContainer.revalidate()
-                pathsContainer.repaint()
-                updateEmptyState()
-                onPathsChanged()
+            init {
+                for (p in listOf(leafPanel, dirPanel)) {
+                    p.isOpaque = true
+                    p.border = JBUI.Borders.empty(1, 2)
+                }
+                leafIcon.border = JBUI.Borders.empty(0, 0, 0, 2)
+                dirIcon.border = JBUI.Borders.empty(0, 0, 0, 2)
+                leafPanel.add(leafIcon, BorderLayout.WEST)
+                leafPanel.add(leafText, BorderLayout.CENTER)
+                leafPanel.add(leafRemove, BorderLayout.EAST)
+                dirPanel.add(dirIcon, BorderLayout.WEST)
+                dirPanel.add(dirText, BorderLayout.CENTER)
             }
 
-            return row
+            override fun getTreeCellRendererComponent(
+                tree: JTree,
+                value: Any?,
+                selected: Boolean,
+                expanded: Boolean,
+                leaf: Boolean,
+                row: Int,
+                hasFocus: Boolean,
+            ): Component {
+                val node = value as? DefaultMutableTreeNode ?: return leafPanel
+                val bg = if (selected) UIUtil.getTreeSelectionBackground(hasFocus) else pathsBg
+                val fg = if (selected) UIUtil.getTreeSelectionForeground(hasFocus) else UIUtil.getTreeForeground()
+                return when (val obj = node.userObject) {
+                    is PathLeaf -> {
+                        leafText.text = obj.label
+                        leafText.foreground = fg
+                        leafPanel.background = bg
+                        leafPanel
+                    }
+                    else -> {
+                        dirText.text = obj.toString()
+                        dirText.foreground = fg
+                        dirPanel.background = bg
+                        dirPanel
+                    }
+                }
+            }
         }
 
-        private fun rebuildPathsContainer() {
-            pathsContainer.removeAll()
-            pathsContainer.add(pathsPlaceholder)
-            listModelStrings(pathsListModel).forEach { p -> pathsContainer.add(buildPathRow(p)) }
-            updateEmptyState()
-            pathsContainer.revalidate()
-            pathsContainer.repaint()
-        }
-
-        private fun updateEmptyState() {
-            pathsPlaceholder.text =
-                t(
-                    "← 在左侧树中选择文件后点「从树添加」",
-                    "← Select files in the tree, then click 'Add from tree'",
-                )
-            pathsPlaceholder.isVisible = pathsListModel.isEmpty
-        }
+        // ── Public API ───────────────────────────────────────────────────────
 
         fun refreshLang() {
             addFromTreeBtn.text = t("← 从树添加", "← Add from tree")
             autoDetectBtn.text = t("自动检测", "Auto-detect")
-            updateEmptyState()
         }
 
         fun addPathIfAbsent(p: String) {
             val n = p.replace('\\', '/')
-            if (listModelStrings(pathsListModel).none { it.replace('\\', '/') == n }) {
+            if (listModelStrings(pathsListModel).none { it == n }) {
                 pathsListModel.addElement(n)
-                pathsContainer.add(buildPathRow(n))
-                updateEmptyState()
-                pathsContainer.revalidate()
-                pathsContainer.repaint()
+                rebuildPathsTree()
                 onPathsChanged()
             }
         }
@@ -795,7 +881,7 @@ class SmartPrSplitterDialog(
         fun setPaths(paths: MutableList<String>) {
             pathsListModel.clear()
             paths.sorted().map { it.replace('\\', '/') }.forEach { pathsListModel.addElement(it) }
-            rebuildPathsContainer()
+            rebuildPathsTree()
             onPathsChanged()
         }
     }
