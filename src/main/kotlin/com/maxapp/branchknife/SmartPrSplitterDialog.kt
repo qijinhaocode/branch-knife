@@ -3,6 +3,7 @@ package com.maxapp.branchknife
 import com.intellij.icons.AllIcons
 import com.intellij.ide.util.PropertiesComponent
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.ui.JBColor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.MessageDialogBuilder
@@ -16,12 +17,17 @@ import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import java.awt.CardLayout
+import java.awt.Color
 import java.awt.Component
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.RenderingHints
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import java.awt.image.BufferedImage
 import javax.swing.BorderFactory
 import javax.swing.Box
 import javax.swing.BoxLayout
@@ -33,6 +39,7 @@ import javax.swing.JPanel
 import javax.swing.JTree
 import javax.swing.Action
 import javax.swing.JEditorPane
+import javax.swing.ImageIcon
 import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
 import javax.swing.event.DocumentEvent
@@ -529,6 +536,29 @@ class SmartPrSplitterDialog(
         )
     }
 
+    // ── Icon utilities ────────────────────────────────────────────────────────
+
+    /** 将任意 Icon 的非透明像素替换为指定颜色，实现单色着色。 */
+    private fun colorizeIcon(icon: javax.swing.Icon, color: Color): javax.swing.Icon {
+        val w = icon.iconWidth.coerceAtLeast(1)
+        val h = icon.iconHeight.coerceAtLeast(1)
+        val img = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
+        val g2 = img.createGraphics()
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+        icon.paintIcon(null, g2, 0, 0)
+        g2.dispose()
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val argb = img.getRGB(x, y)
+                val alpha = (argb ushr 24) and 0xFF
+                if (alpha > 10) {
+                    img.setRGB(x, y, (alpha shl 24) or (color.red shl 16) or (color.green shl 8) or color.blue)
+                }
+            }
+        }
+        return ImageIcon(img)
+    }
+
     // ── Branch Target Card ────────────────────────────────────────────────────
 
     private inner class BranchTargetCard(
@@ -547,7 +577,17 @@ class SmartPrSplitterDialog(
         private val pathsContainer =
             JPanel().apply {
                 layout = BoxLayout(this, BoxLayout.Y_AXIS)
-                isOpaque = false
+                isOpaque = true
+                background = run {
+                    val base = UIUtil.getTextFieldBackground()
+                    (1..3).fold(base) { c, _ ->
+                        Color(
+                            (c.red * 0.82).toInt().coerceIn(0, 255),
+                            (c.green * 0.82).toInt().coerceIn(0, 255),
+                            (c.blue * 0.82).toInt().coerceIn(0, 255),
+                        )
+                    }
+                }
             }
 
         private val pathsPlaceholder =
@@ -577,13 +617,22 @@ class SmartPrSplitterDialog(
                 isOpaque = false
             }
 
+            val trashIcon = colorizeIcon(AllIcons.Actions.GC, UIUtil.getInactiveTextColor())
+            val trashHoverIcon = colorizeIcon(AllIcons.Actions.GC, JBColor.RED)
             val deleteBtn =
-                JButton(AllIcons.General.Remove).apply {
+                JButton(trashIcon).apply {
                     isContentAreaFilled = false
                     isBorderPainted = false
+                    isOpaque = false
                     cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                     toolTipText = t("删除此目标", "Remove this branch")
                     addActionListener { onRemoveThisTarget() }
+                    addMouseListener(
+                        object : MouseAdapter() {
+                            override fun mouseEntered(e: MouseEvent) { icon = trashHoverIcon }
+                            override fun mouseExited(e: MouseEvent) { icon = trashIcon }
+                        },
+                    )
                 }
 
             val headerRow =
@@ -591,7 +640,9 @@ class SmartPrSplitterDialog(
                     isOpaque = false
                     border = JBUI.Borders.empty(0, 0, 8, 0)
                     add(
-                        JLabel(AllIcons.Vcs.Branch).apply { border = JBUI.Borders.empty(0, 0, 0, 6) },
+                        JLabel(colorizeIcon(AllIcons.Vcs.Branch, JBColor(Color(0x2675BF), Color(0x589DF6)))).apply {
+                            border = JBUI.Borders.empty(0, 0, 0, 6)
+                        },
                         BorderLayout.WEST,
                     )
                     add(branchField, BorderLayout.CENTER)
@@ -620,6 +671,7 @@ class SmartPrSplitterDialog(
                     preferredSize = Dimension(0, JBUI.scale(90))
                     maximumSize = Dimension(Int.MAX_VALUE, JBUI.scale(160))
                     alignmentX = Component.LEFT_ALIGNMENT
+                    viewport.background = pathsContainer.background
                 }
 
             // ── Bottom bar: 2 buttons ────────────────────────────────────────
@@ -658,24 +710,24 @@ class SmartPrSplitterDialog(
         }
 
         private fun buildPathRow(path: String): JPanel {
-            val fileName = path.substringAfterLast('/')
-            val fileIcon =
-                try {
-                    FileTypeManager.getInstance().getFileTypeByFileName(fileName).icon
-                        ?: AllIcons.FileTypes.Text
-                } catch (_: Exception) {
-                    AllIcons.FileTypes.Text
-                }
+            val fileIcon = AllIcons.Nodes.Folder
 
+            val inactiveColor = UIUtil.getInactiveTextColor()
             val removeBtn =
                 JButton("×").apply {
                     isContentAreaFilled = false
                     isBorderPainted = false
-                    font = font.deriveFont(Font.BOLD)
-                    foreground = UIUtil.getInactiveTextColor()
+                    font = font.deriveFont(Font.BOLD, 14f)
+                    foreground = inactiveColor
                     cursor = java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR)
                     toolTipText = t("移除", "Remove")
                     preferredSize = Dimension(JBUI.scale(22), JBUI.scale(22))
+                    addMouseListener(
+                        object : MouseAdapter() {
+                            override fun mouseEntered(e: MouseEvent) { foreground = JBColor.RED }
+                            override fun mouseExited(e: MouseEvent) { foreground = inactiveColor }
+                        },
+                    )
                 }
 
             val row =
