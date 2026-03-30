@@ -1,0 +1,15 @@
+# Gradle build cache & wrapper binaries
+.gradle/
+build/
+gradle/wrapper/gradle-wrapper.jar
+gradlew
+gradlew.bat
+
+# IntelliJ IDEA project files (generated)
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
