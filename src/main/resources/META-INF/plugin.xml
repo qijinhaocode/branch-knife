@@ -68,6 +68,12 @@ apps/order-service/school=school-service
     ]]></description>
 
     <change-notes><![CDATA[
+<h3>0.1.4</h3>
+<ul>
+  <li>New: Execute Split &amp; Push — split branches and push to remote in one click (dropdown on the main button)</li>
+  <li>Renamed plugin to Git Branch Knife for better discoverability</li>
+</ul>
+
 <h3>0.1.2</h3>
 <ul>
   <li>Fixed binary incompatibility with IDEA 2024.3 and 2025.1 (GitBranchActionsUtil API changes)</li>
