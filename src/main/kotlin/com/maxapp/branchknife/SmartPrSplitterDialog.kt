@@ -47,7 +47,6 @@ import javax.swing.JEditorPane
 import javax.swing.ImageIcon
 import javax.swing.JMenuItem
 import javax.swing.JPopupMenu
-import javax.swing.JViewport
 import javax.swing.KeyStroke
 import javax.swing.ScrollPaneConstants
 import javax.swing.SwingUtilities
