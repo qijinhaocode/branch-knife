@@ -194,6 +194,8 @@ class SliceAction : AnAction() {
             Messages.showInfoMessage(project, t("未配置任何分支目标。", "No branch targets configured."), "Branch Knife")
             return
         }
+        val shouldPush = dialog.shouldPushAfterSplit()
+        val remote = repo.remotes.firstOrNull()?.name ?: "origin"
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Branch Knife：按服务拆分分支", true) {
                 override fun run(indicator: ProgressIndicator) {
@@ -209,18 +211,30 @@ class SliceAction : AnAction() {
                                 targets,
                                 indicator,
                             )
-                        // 后台再跑一遍 branch：不指望 IDE「读终端」，但与手动执行类似，有时利于 Git/FS 状态对齐
+                        // 推送每个新分支
+                        if (shouldPush && created.isNotEmpty()) {
+                            created.forEachIndexed { i, branch ->
+                                indicator.text = t("推送分支 $branch …", "Pushing $branch …")
+                                indicator.fraction = (created.size + i + 1).toDouble() / (created.size * 2)
+                                val h = GitLineHandler(project, repo.root, GitCommand.PUSH)
+                                h.addParameters(remote, branch)
+                                h.setSilent(false)
+                                Git.getInstance().runCommand(h)
+                            }
+                        }
                         nudgeGitBranchList(project, repo.root)
-                        // GitRepository.update() 禁止在 EDT 调用（IJ 平台线程模型），必须在当前 BGT 完成
                         updateAllGitRepositories(project)
                         ApplicationManager.getApplication().invokeLater {
                             publishGitChangeAndRefreshVcsUiOnEdt(project)
                             val branchList = created.joinToString("\n") { "• $it" }
+                            val pushedNote = if (shouldPush)
+                                t("\n\n已推送至 $remote。", "\n\nPushed to $remote.")
+                            else ""
                             Messages.showInfoMessage(
                                 project,
                                 t(
-                                    "已成功创建 ${created.size} 个分支：\n\n$branchList\n\n已切回「$branchBeforeRun」。",
-                                    "Successfully created ${created.size} branch(es):\n\n$branchList\n\nSwitched back to \"$branchBeforeRun\".",
+                                    "已成功创建 ${created.size} 个分支：\n\n$branchList\n\n已切回「$branchBeforeRun」。$pushedNote",
+                                    "Successfully created ${created.size} branch(es):\n\n$branchList\n\nSwitched back to \"$branchBeforeRun\".$pushedNote",
                                 ),
                                 "Branch Knife",
                             )

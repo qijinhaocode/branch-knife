@@ -10,6 +10,7 @@ import com.intellij.openapi.ui.MessageDialogBuilder
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.Splitter
 import com.intellij.openapi.util.SystemInfo
+import com.intellij.ui.components.JBOptionButton
 import com.intellij.ui.DocumentAdapter
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
@@ -159,18 +160,57 @@ class SmartPrSplitterDialog(
         }
 
         init()
+        // 对话框显示后把 splitOptionBtn 注册为 default button → 蓝色主按钮样式
+        SwingUtilities.invokeLater {
+            splitOptionBtn?.let { btn ->
+                (window as? javax.swing.RootPaneContainer)?.rootPane?.setDefaultButton(btn)
+            }
+        }
         refreshOkButtonTooltip()
         updateStatus()
     }
 
     override fun getPreferredSize(): Dimension = Dimension(JBUI.scale(920), JBUI.scale(560))
 
+    private var pushAfterSplit = false
+    private var splitOptionBtn: JBOptionButton? = null
+
     fun getConfirmedTargets(): List<PrSplitTarget>? = confirmedTargets
+    fun shouldPushAfterSplit(): Boolean = pushAfterSplit
 
     override fun doOKAction() {
         confirmedTargets = validateAndBuildTargets()
         if (confirmedTargets == null) return
         super.doOKAction()
+    }
+
+    override fun createSouthPanel(): JComponent {
+        val splitAndPushAction = object : javax.swing.AbstractAction(
+            t("执行拆分并推送", "Execute Split & Push")
+        ) {
+            override fun actionPerformed(e: java.awt.event.ActionEvent) {
+                pushAfterSplit = true
+                doOKAction()
+            }
+        }
+        // 同步 okAction 的启用状态到 split & push 选项
+        okAction.addPropertyChangeListener { evt ->
+            if (evt.propertyName == "enabled") {
+                splitAndPushAction.isEnabled = evt.newValue as Boolean
+            }
+        }
+        val optionBtn = JBOptionButton(okAction, arrayOf(splitAndPushAction))
+        splitOptionBtn = optionBtn
+        val cancelBtn = createJButtonForAction(cancelAction)
+        return JPanel(BorderLayout()).apply {
+            border = JBUI.Borders.empty(8, 0, 0, 0)
+            val btnPanel = JPanel(FlowLayout(FlowLayout.RIGHT, JBUI.scale(8), 0)).apply {
+                isOpaque = false
+                add(cancelBtn)
+                add(optionBtn)
+            }
+            add(btnPanel, BorderLayout.EAST)
+        }
     }
 
     override fun createCenterPanel(): JComponent {
