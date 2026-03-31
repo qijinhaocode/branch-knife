@@ -1,59 +1,70 @@
 <idea-plugin>
     <id>com.maxapp.branchknife</id>
-    <name>Branch Knife</name>
+    <name>Git Branch Knife</name>
     <vendor>jinxinfuture</vendor>
 
     <description><![CDATA[
-<h2>Branch Knife — Smart PR Splitter for Monorepos</h2>
+<h2>Git Branch Knife — Split a Giant Git Branch into Focused PRs</h2>
 
 <p>
-Branch Knife helps you split a large feature branch into multiple focused, reviewable pull requests —
-each targeting a different service or module in your monorepo. No more giant PRs that no one wants to review.
+Working in a <b>monorepo</b>? Made changes across multiple services in one branch?
+<b>Git Branch Knife</b> lets you visually split your Git branch changes into multiple focused,
+reviewable pull requests — one per service or module — directly inside IntelliJ IDEA.
+</p>
+<p>
+No more giant PRs that touch 10 services at once. No more reviewers saying "this is too big to review."
 </p>
 
-<h3>How it works</h3>
+<h3>The Problem It Solves</h3>
+<p>
+You're on <code>feature/cross-service-update</code> and your changes span <code>payment-service</code>,
+<code>order-service</code>, and <code>auth-service</code>. To get proper code reviews, you need three
+separate branches and PRs — but creating them manually is tedious and error-prone.
+Git Branch Knife does it in one click.
+</p>
+
+<h3>How It Works</h3>
 <ol>
-  <li>Open the <b>Smart PR Splitter</b> from <b>Tools → Branch Knife</b>, the <b>Git</b> menu, or right-click a branch in the Git log.</li>
-  <li>Your local changes are shown in a file tree on the left.</li>
-  <li>Branch target cards appear on the right — one per service, auto-detected from your <code>branch-knife.paths</code> config.</li>
-  <li>Review assignments, adjust paths, then click <b>Execute Split</b>.</li>
+  <li>Trigger <b>Slice by Service</b> from the <b>Git menu</b>, <b>Tools → Git Branch Knife</b>, or right-click a branch in the Git Log.</li>
+  <li>Your changed files appear in a tree on the left.</li>
+  <li>Branch target cards are auto-created on the right — one per service, based on your <code>branch-knife.paths</code> config.</li>
+  <li>Adjust assignments if needed, then click <b>Execute Split</b>.</li>
 </ol>
 
 <h3>Key Features</h3>
 <ul>
-  <li><b>Visual path assignment</b> — Drag files between branch cards; each card has an editable branch name and commit message.</li>
-  <li><b>Hierarchical path tree</b> — Files in each card are shown as a collapsible tree, not a flat list.</li>
-  <li><b>Unassigned file tracking</b> — Files not yet assigned to any branch are highlighted in red in the left tree, including collapsed parent directories. Hover to see the count.</li>
-  <li><b>Smart branch naming</b> — New branches are named <code>{current-branch}-{service}</code> (e.g. <code>feature/my-work-payment-service</code>).</li>
-  <li><b>Move all files</b> — Move all files from one card to another in one click; the empty source card is removed automatically.</li>
-  <li><b>Add from tree / Auto-detect</b> — Select files in the left tree and add them to a card, or let the plugin detect the right card from your path rules.</li>
-  <li><b>Keyboard-friendly</b> — Press <kbd>Delete</kbd> or <kbd>⌫</kbd> to remove selected files or entire directory groups from a card. Right-click for context menu.</li>
-  <li><b>Row hover highlight</b> — Hovering over a path row highlights the entire row for easy targeting.</li>
-  <li><b>branch-knife.paths config</b> — Place a <code>branch-knife.paths</code> file at the repo root to define your own path → service mapping rules. Takes effect immediately; no IDE restart needed.</li>
-  <li><b>branch-knife.base config</b> — Pin the diff base branch (<code>main</code> or <code>master</code>) when both exist in your repo.</li>
-  <li><b>i18n</b> — UI supports English and Chinese; toggle in the top-right corner.</li>
+  <li><b>Visual branch splitter</b> — See all changed files and assign them to target branches with a clear card-based UI.</li>
+  <li><b>Auto-detection</b> — Automatically groups files by service using a simple path config file (<code>branch-knife.paths</code>).</li>
+  <li><b>Unassigned file tracking</b> — Files not yet assigned to any branch are highlighted red in the left tree. Collapsed directories also turn red so nothing slips through.</li>
+  <li><b>Smart branch naming</b> — New branches are named <code>{current-branch}-{service}</code>, e.g. <code>feature/my-work-payment-service</code>.</li>
+  <li><b>Hierarchical file tree</b> — Files inside each card are shown as a collapsible tree, not a flat list.</li>
+  <li><b>Move all files</b> — Bulk-move all files from one card to another in one click; the empty card is removed automatically.</li>
+  <li><b>Keyboard support</b> — Press <kbd>Delete</kbd> / <kbd>⌫</kbd> to remove selected files or whole directory groups from a card.</li>
+  <li><b>Right-click context menu</b> — Move single files or entire directories to another branch target.</li>
+  <li><b>Zero IDE restart</b> — Edit <code>branch-knife.paths</code> and re-open the dialog; changes take effect immediately.</li>
+  <li><b>English / Chinese UI</b> — Toggle language in the top-right corner of the dialog.</li>
 </ul>
 
-<h3>branch-knife.paths format</h3>
+<h3>branch-knife.paths — Path Config Format</h3>
 <pre>
-# one rule per line: path-prefix=service-name
+# path-prefix=branch-name, one rule per line
 apps/payment-service=payment-service
 apps/order-service=order-service
 apps/auth-service=auth-service
-# multiple paths for one service:
-apps/order-service/school-service=school-service
+# multiple paths → one branch:
+apps/order-service/school=school-service
 </pre>
-<p>Files not matching any rule are grouped into an <b>Others</b> card for manual assignment.</p>
+<p>Files not matching any rule go into an <b>Others</b> card for manual assignment.</p>
 
 <h3>Entry Points</h3>
 <ul>
-  <li><b>Tools → Branch Knife → Slice by Service…</b></li>
   <li><b>Git menu → Slice by Service…</b></li>
+  <li><b>Tools → Git Branch Knife → Slice by Service…</b></li>
   <li><b>VCS Operations popup</b> (<kbd>Alt+`</kbd>)</li>
   <li>Right-click a branch in the <b>Git Log</b> branch panel</li>
-  <li><b>Find Action</b> (<kbd>⌘⇧A</kbd> / <kbd>Ctrl+Shift+A</kbd>) → search <code>Slice by Service</code></li>
+  <li><b>Find Action</b> (<kbd>⌘⇧A</kbd> / <kbd>Ctrl+Shift+A</kbd>) → <code>Slice by Service</code></li>
 </ul>
-<p>No default global shortcut is set. Bind one in <b>Settings → Keymap → Branch Knife</b>.</p>
+<p>No default shortcut — bind one in <b>Settings → Keymap → Git Branch Knife</b>.</p>
     ]]></description>
 
     <change-notes><![CDATA[

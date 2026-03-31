@@ -1,1 +1,1 @@
-rootProject.name = "Branch Knife"
+rootProject.name = "Git Branch Knife"
