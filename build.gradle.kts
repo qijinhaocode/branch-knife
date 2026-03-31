@@ -6,7 +6,7 @@ plugins {
 }
 
 group = providers.gradleProperty("pluginGroup").get()
-version = "0.1.1"
+version = "0.1.2"
 
 repositories {
     mavenCentral()
@@ -31,7 +31,7 @@ tasks.withType<KotlinCompile>().configureEach {
 tasks {
     patchPluginXml {
         sinceBuild.set("232")
-        untilBuild.set("251.*")
+        untilBuild.set("")  // no upper bound — supports all future IDE versions
     }
     // Branch-Knife has no configurable settings UI, so searchable options are not needed
     buildSearchableOptions {

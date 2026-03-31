@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
 import com.intellij.util.ui.UIUtil
+import javax.swing.UIManager
 import java.awt.AlphaComposite
 import java.awt.BorderLayout
 import java.awt.CardLayout
@@ -620,7 +621,7 @@ class SmartPrSplitterDialog(
             JPanel(BorderLayout()).apply {
                 border =
                     BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(UIUtil.getSeparatorColor()),
+                        BorderFactory.createLineBorder(JBColor.namedColor("Separator.separatorColor", JBColor(0xC9C9C9, 0x4A4A4A))),
                         JBUI.Borders.empty(10, 12, 10, 12),
                     )
             }
@@ -762,7 +763,7 @@ class SmartPrSplitterDialog(
 
             val pathsScroll =
                 JBScrollPane(pathsTree).apply {
-                    border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
+                    border = BorderFactory.createLineBorder(JBColor.namedColor("Separator.separatorColor", JBColor(0xC9C9C9, 0x4A4A4A)))
                     verticalScrollBarPolicy = ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED
                     horizontalScrollBarPolicy = ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER
                     preferredSize = Dimension(0, JBUI.scale(100))
@@ -775,7 +776,7 @@ class SmartPrSplitterDialog(
                 JPanel(BorderLayout()).apply {
                     isOpaque = true
                     background = pathsBg
-                    border = BorderFactory.createLineBorder(UIUtil.getSeparatorColor())
+                    border = BorderFactory.createLineBorder(JBColor.namedColor("Separator.separatorColor", JBColor(0xC9C9C9, 0x4A4A4A)))
                     add(
                         JLabel(
                             t("← 在左侧树中选择文件，点「从树添加」", "← Select files in the left tree, then click 'Add from tree'"),

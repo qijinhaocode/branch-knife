@@ -60,6 +60,24 @@ private fun t(zh: String, en: String) = if (dialogLang == DialogLang.ZH) zh else
  *
  * **基准分支**：`git diff` 默认依次尝试 `master`、`main`；若仓库根存在 **branch-knife.base**（单独一行 `main` 或 `master`），则优先使用该基准。
  */
+/**
+ * GitBranchActionsUtil.BRANCHES_KEY / SELECTED_REPO_KEY 在 IDEA 2025.1 中被移除。
+ * 通过反射按需获取，旧版本正常使用，新版本退化为 null（插件仍可运行，只是无法从弹窗读取分支）。
+ */
+@Suppress("UNCHECKED_CAST")
+private val GIT_BRANCHES_KEY: DataKey<List<GitBranch>>? = runCatching {
+    GitBranchActionsUtil::class.java.getDeclaredField("BRANCHES_KEY")
+        .also { it.isAccessible = true }
+        .get(null) as? DataKey<List<GitBranch>>
+}.getOrNull()
+
+@Suppress("UNCHECKED_CAST")
+private val GIT_SELECTED_REPO_KEY: DataKey<GitRepository>? = runCatching {
+    GitBranchActionsUtil::class.java.getDeclaredField("SELECTED_REPO_KEY")
+        .also { it.isAccessible = true }
+        .get(null) as? DataKey<GitRepository>
+}.getOrNull()
+
 class SliceAction : AnAction() {
 
     override fun update(e: AnActionEvent) {
@@ -91,7 +109,7 @@ class SliceAction : AnAction() {
         val project = e.project ?: return
         val branchUiCtx = branchContextFromGitUi(e)
         val repo =
-            e.getData(GitBranchActionsUtil.SELECTED_REPO_KEY)
+            GIT_SELECTED_REPO_KEY?.let { e.getData(it) }
                 ?: branchUiCtx?.preferredRepo
                 ?: primaryRepository(project)
         if (repo == null) {
@@ -234,7 +252,7 @@ class SliceAction : AnAction() {
      * 2. **Git Log 左侧分支树**焦点上下文中的 `GIT_BRANCH_KEY`（与平台 `GitBranchKey` 一致；该树右键菜单无法注册第三方项）。
      */
     private fun branchContextFromGitUi(e: AnActionEvent): GitPopupBranchContext? {
-        val fromPopup = e.getData(GitBranchActionsUtil.BRANCHES_KEY)
+        val fromPopup = GIT_BRANCHES_KEY?.let { e.getData(it) }
         if (!fromPopup.isNullOrEmpty()) {
             val b: GitBranch = fromPopup.first()
             return GitPopupBranchContext(
@@ -517,7 +535,7 @@ class SliceAction : AnAction() {
         val mgr = GitRepositoryManager.getInstance(project)
         for (repository in mgr.repositories) {
             try {
-                repository.gitDir.refresh(false, true)
+                repository.root.refresh(false, true)
             } catch (_: Throwable) {
                 // 个别环境下 refresh 失败不阻断后续通知
             }

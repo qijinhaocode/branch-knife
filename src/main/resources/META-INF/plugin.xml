@@ -57,6 +57,12 @@ apps/order-service/school-service=school-service
     ]]></description>
 
     <change-notes><![CDATA[
+<h3>0.1.2</h3>
+<ul>
+  <li>Fixed binary incompatibility with IDEA 2024.3 and 2025.1 (GitBranchActionsUtil API changes)</li>
+  <li>Replaced deprecated UIUtil.getSeparatorColor() and GitRepository.getGitDir()</li>
+</ul>
+
 <h3>0.1.1</h3>
 <ul>
   <li>Added plugin icon</li>
