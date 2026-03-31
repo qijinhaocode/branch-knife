@@ -327,7 +327,7 @@ class SmartPrSplitterDialog(
     private fun showHelpDialog() {
         BkHelpDialog(
             project = project,
-            dialogTitle = t("Branch-Knife 使用说明", "Branch-Knife Help"),
+            dialogTitle = t("Branch Knife 使用说明", "Branch Knife Help"),
             bodyHtml = if (dialogLang == DialogLang.ZH) helpBodyZh() else helpBodyEn(),
         ).show()
     }
@@ -378,7 +378,7 @@ class SmartPrSplitterDialog(
                     "请至少保留一张分支目标，或使用「+ 添加目标分支」创建。",
                     "Please keep at least one Branch Target.",
                 ),
-                "Branch-Knife",
+                "Branch Knife",
             )
             return null
         }
@@ -395,7 +395,7 @@ class SmartPrSplitterDialog(
                         "每个分支目标都需要填写分支名与提交说明。",
                         "Branch name and commit message are required for each target.",
                     ),
-                    "Branch-Knife",
+                    "Branch Knife",
                 )
                 return null
             }
@@ -403,7 +403,7 @@ class SmartPrSplitterDialog(
                 Messages.showErrorDialog(
                     project,
                     t("分支「$branch」未包含任何路径。", "Branch \"$branch\" has no paths assigned."),
-                    "Branch-Knife",
+                    "Branch Knife",
                 )
                 return null
             }
@@ -415,7 +415,7 @@ class SmartPrSplitterDialog(
                         "以下路径被重复分配到多个分支：\n${dup.take(6).joinToString("\n")}",
                         "Paths assigned to multiple branches:\n${dup.take(6).joinToString("\n")}",
                     ),
-                    "Branch-Knife",
+                    "Branch Knife",
                 )
                 return null
             }
@@ -426,7 +426,7 @@ class SmartPrSplitterDialog(
             val proceed =
                 MessageDialogBuilder
                     .okCancel(
-                        "Branch-Knife",
+                        "Branch Knife",
                         t(
                             "还有 ${missing.size} 个文件未分配，是否仍只提交已分配的路径？\n${missing.take(10).joinToString("\n")}${if (missing.size > 10) "\n…" else ""}",
                             "${missing.size} file(s) not assigned. Continue with only the assigned paths?\n${missing.take(10).joinToString("\n")}${if (missing.size > 10) "\n…" else ""}",
@@ -483,7 +483,7 @@ class SmartPrSplitterDialog(
             Messages.showInfoMessage(
                 project,
                 t("请先在左侧树中选择文件或文件夹。", "Select files or folders in the left tree first."),
-                "Branch-Knife",
+                "Branch Knife",
             )
             return
         }
@@ -500,7 +500,7 @@ class SmartPrSplitterDialog(
             Messages.showInfoMessage(
                 project,
                 t("没有与当前卡片顺序对应的自动分组规则。", "No grouping rule matches this card's position."),
-                "Branch-Knife",
+                "Branch Knife",
             )
         }
     }

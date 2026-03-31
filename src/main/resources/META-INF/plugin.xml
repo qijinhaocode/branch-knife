@@ -1,19 +1,19 @@
 <idea-plugin>
     <id>com.maxapp.branchknife</id>
-    <name>Branch-Knife</name>
-    <vendor>Maxapp</vendor>
+    <name>Branch Knife</name>
+    <vendor>jinxinfuture</vendor>
 
     <description><![CDATA[
-<h2>Branch-Knife — Smart PR Splitter for Monorepos</h2>
+<h2>Branch Knife — Smart PR Splitter for Monorepos</h2>
 
 <p>
-Branch-Knife helps you split a large feature branch into multiple focused, reviewable pull requests —
+Branch Knife helps you split a large feature branch into multiple focused, reviewable pull requests —
 each targeting a different service or module in your monorepo. No more giant PRs that no one wants to review.
 </p>
 
 <h3>How it works</h3>
 <ol>
-  <li>Open the <b>Smart PR Splitter</b> from <b>Tools → Branch-Knife</b>, the <b>Git</b> menu, or right-click a branch in the Git log.</li>
+  <li>Open the <b>Smart PR Splitter</b> from <b>Tools → Branch Knife</b>, the <b>Git</b> menu, or right-click a branch in the Git log.</li>
   <li>Your local changes are shown in a file tree on the left.</li>
   <li>Branch target cards appear on the right — one per service, auto-detected from your <code>branch-knife.paths</code> config.</li>
   <li>Review assignments, adjust paths, then click <b>Execute Split</b>.</li>
@@ -47,7 +47,7 @@ apps/order-service/school-service=school-service
 
 <h3>Entry Points</h3>
 <ul>
-  <li><b>Tools → Branch-Knife → Slice by Service…</b></li>
+  <li><b>Tools → Branch Knife → Slice by Service…</b></li>
   <li><b>Git menu → Slice by Service…</b></li>
   <li><b>VCS Operations popup</b> (<kbd>Alt+`</kbd>)</li>
   <li>Right-click a branch in the <b>Git Log</b> branch panel</li>
@@ -97,7 +97,7 @@ apps/order-service/school-service=school-service
             <add-to-group group-id="Vcs.Operations.Popup" anchor="last"/>
         </action>
         <group id="com.maxapp.branchknife.ToolsMenuGroup"
-               text="Branch-Knife"
+               text="Branch Knife"
                description="Split monorepo branches by service path"
                popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>

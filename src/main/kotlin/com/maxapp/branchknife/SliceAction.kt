@@ -113,14 +113,14 @@ class SliceAction : AnAction() {
                 ?: branchUiCtx?.preferredRepo
                 ?: primaryRepository(project)
         if (repo == null) {
-            Messages.showErrorDialog(project, t("未找到 Git 仓库。", "No Git repository found."), "Branch-Knife")
+            Messages.showErrorDialog(project, t("未找到 Git 仓库。", "No Git repository found."), "Branch Knife")
             return
         }
         val root = repo.root
         val branchBeforeRun =
             repo.currentBranchName
                 ?: run {
-                    Messages.showErrorDialog(project, t("当前为 detached HEAD，无法记录要切回的分支。", "Cannot proceed: repository is in detached HEAD state."), "Branch-Knife")
+                    Messages.showErrorDialog(project, t("当前为 detached HEAD，无法记录要切回的分支。", "Cannot proceed: repository is in detached HEAD state."), "Branch Knife")
                     return
                 }
         val targetBranch =
@@ -128,13 +128,13 @@ class SliceAction : AnAction() {
                 ?: return
         val preflight =
             try {
-                runGitOffEdt(project, "Branch-Knife：读取差异与状态") {
+                runGitOffEdt(project, "Branch Knife：读取差异与状态") {
                     val baseAndPaths = diffNameOnlyBaseToTarget(project, root, targetBranch)
                     val dirty = hasDirtyWorkingTree(project, root)
                     PreflightResult(baseAndPaths, dirty)
                 }
             } catch (ex: Throwable) {
-                Messages.showErrorDialog(project, ex.message ?: ex.toString(), "Branch-Knife")
+                Messages.showErrorDialog(project, ex.message ?: ex.toString(), "Branch Knife")
                 return
             }
         val (baseBranch, paths) = preflight.baseAndPaths
@@ -145,7 +145,7 @@ class SliceAction : AnAction() {
                     "目标分支不能与基准分支「$baseBranch」相同。",
                     "Target branch cannot be the same as the base branch \"$baseBranch\".",
                 ),
-                "Branch-Knife",
+                "Branch Knife",
             )
             return
         }
@@ -156,14 +156,14 @@ class SliceAction : AnAction() {
                     "「$baseBranch...$targetBranch」之间没有文件差异，无需拆分。\n请确认目标分支上已有相对基准的提交。",
                     "No file differences found between \"$baseBranch\" and \"$targetBranch\".\nMake sure the target branch has commits relative to the base.",
                 ),
-                "Branch-Knife",
+                "Branch Knife",
             )
             return
         }
         if (preflight.dirty) {
             val proceed =
                 MessageDialogBuilder.okCancel(
-                    "Branch-Knife",
+                    "Branch Knife",
                     t(
                         "工作区或暂存区有未提交修改，拆分过程会多次切换分支，可能产生冲突或丢失风险。\n建议先 commit / stash 再操作。是否仍要继续？",
                         "You have uncommitted changes. The split process will switch branches multiple times, which may cause conflicts.\nIt is recommended to commit or stash first. Continue anyway?",
@@ -175,7 +175,7 @@ class SliceAction : AnAction() {
         val rules = SlicerService.loadPathRules(root.path)
         val grouped = SlicerService.groupPaths(paths, rules).filterValues { it.isNotEmpty() }
         if (grouped.isEmpty()) {
-            Messages.showInfoMessage(project, t("没有可分组的路径。", "No paths to group."), "Branch-Knife")
+            Messages.showInfoMessage(project, t("没有可分组的路径。", "No paths to group."), "Branch Knife")
             return
         }
         val dialog =
@@ -191,11 +191,11 @@ class SliceAction : AnAction() {
         if (!dialog.showAndGet()) return
         val targets = dialog.getConfirmedTargets()
         if (targets.isNullOrEmpty()) {
-            Messages.showInfoMessage(project, t("未配置任何分支目标。", "No branch targets configured."), "Branch-Knife")
+            Messages.showInfoMessage(project, t("未配置任何分支目标。", "No branch targets configured."), "Branch Knife")
             return
         }
         ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Branch-Knife：按服务拆分分支", true) {
+            object : Task.Backgroundable(project, "Branch Knife：按服务拆分分支", true) {
                 override fun run(indicator: ProgressIndicator) {
                     try {
                         indicator.isIndeterminate = false
@@ -222,13 +222,13 @@ class SliceAction : AnAction() {
                                     "已成功创建 ${created.size} 个分支：\n\n$branchList\n\n已切回「$branchBeforeRun」。",
                                     "Successfully created ${created.size} branch(es):\n\n$branchList\n\nSwitched back to \"$branchBeforeRun\".",
                                 ),
-                                "Branch-Knife",
+                                "Branch Knife",
                             )
                         }
                     } catch (ex: Throwable) {
                         val msg = ex.message ?: ex.toString()
                         ApplicationManager.getApplication().invokeLater {
-                            Messages.showErrorDialog(project, msg, "Branch-Knife")
+                            Messages.showErrorDialog(project, msg, "Branch Knife")
                         }
                     }
                 }
@@ -333,11 +333,11 @@ class SliceAction : AnAction() {
         }
         val locals =
             try {
-                runGitOffEdt(project, "Branch-Knife：读取本地分支") {
+                runGitOffEdt(project, "Branch Knife：读取本地分支") {
                     listLocalBranchShortNames(project, root)
                 }
             } catch (ex: Throwable) {
-                Messages.showErrorDialog(project, ex.message ?: ex.toString(), "Branch-Knife")
+                Messages.showErrorDialog(project, ex.message ?: ex.toString(), "Branch Knife")
                 return null
             }
         val candidates = locals.filter { it !in BASE_BRANCH_NAMES }.sorted()
@@ -348,7 +348,7 @@ class SliceAction : AnAction() {
                     "当前在基准分支「$current」，且没有其它本地分支可选。\n请先创建或拉取要拆分的功能分支。",
                     "You are on the base branch \"$current\" and there are no other local branches.\nPlease create or pull the feature branch you want to split.",
                 ),
-                "Branch-Knife",
+                "Branch Knife",
             )
             return null
         }
@@ -604,7 +604,7 @@ private class ChooseFeatureBranchDialog(
     private val list = JBList(model)
 
     init {
-        title = "Branch-Knife"
+        title = "Branch Knife"
         init()
         if (candidates.isNotEmpty()) {
             list.selectedIndex = 0

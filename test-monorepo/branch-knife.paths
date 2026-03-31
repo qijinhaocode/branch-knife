@@ -1,4 +1,0 @@
-# 路径片段（相对仓库根）= 对话框里显示的服务名；先匹配的先生效，请把更长的路径写在前面
-src/sample.svc.alpha=Svc-Alpha
-src/sample.svc.beta=Svc-Beta
-src/sample.lib.shared=Lib-Shared
